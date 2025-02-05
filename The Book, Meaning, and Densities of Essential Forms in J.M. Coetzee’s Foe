@@ -1,0 +1,267 @@
+“The Book, Meaning, and Densities of Essential Forms in J.M. Coetzee’s Foe,” LIT: Literature Interpretation Theory vol. 35, no. 1 (2024): 18-38.
+
+This is the code used in my essay “The Book, Meaning, and Densities of Essential Forms in J.M. Coetzee’s Foe.” Note that the code was written under R version 4.2.2 (“Innocent and Trusting”). If this is not the version you are using, you may need to tweak certain elements of the code to ensure functionality. You are welcome to use or adapt this code for your own project(s).
+
+#import and clean texts
+setwd(“…”) #set your working directory
+library(quanteda)
+library(readtext)
+litcorpus <- texts(readtext("Foe.txt", encoding = "UTF-8"))
+
+a <- tokens(litcorpus, what = "word", remove_punct = TRUE)
+b <- tokens_tolower(a)
+c <- tokens_select(b, pattern = stopwords("en"), selection = "remove")
+d <- as.list(c)
+i <- paste(unlist(d), collapse = " ")
+corpus <- corpus(i)
+
+#to lemmatize the text
+library(spacyr)
+sp <- spacy_parse(i, lemma = TRUE, entity = FALSE, pos = FALSE)
+sp$token <- sp$lemma
+j <- tokens(sp$token, what = "word", remove_punct = TRUE)
+k <- tokens_select(j, c("s"), selection = "remove")
+m <- as.list(k)
+n <- paste(unlist(m), collapse = " ")
+spacy_finalize()
+
+#code for table 1 – most frequent words in Coetzee’s Foe (function words excluded).
+library(quanteda.textstats)
+library(quanteda.textplots)
+p <- dfm(n)
+textstat_frequency(p)[1:10, ]
+
+#code for figure 1 – a feature co-occurrence network of Coetzee’s Foe.
+fcmat <- fcm(n, context = "window", count = "frequency", tri = FALSE)
+feat <- names(topfeatures(fcmat, 200))
+fcm_select(fcmat, pattern = feat) %>%
+textplot_network(min_freq = 0.85, omit_isolated = TRUE, edge_color = “#768aa5”, edge_alpha = 0.5, edge_size = 1, vertex_color = “#536174”, vertex_size = 2, vertex_labelcolor = “#000000”, vertex_labelfont = NULL, vertex_labelsize = 3, offset = NULL)
+
+#code for table 2 – top-weighted words of Coetzee’s Foe, by partition.
+r <- tokens(n)
+s <- tokens_chunk(r, size = 400) #change 'size' value as required
+dfm_toks <- dfm(s)
+dfm_tif <- dfm_tfidf(dfm_toks)
+topfeatures(dfm_tif, n=2)
+topfeatures(dfm_tif [1, ], n=2) #to inspect tf-idf features of each section (change no. in sq. brackets)
+
+#code for figure 2 – word clusters (40 words) around the terms “foe” (red) and “write” (blue) in a word embedding map of Coetzee’s Foe.
+#create word embedding of novel
+library(text2vec)
+glove <- GlobalVectors$new(rank = 50, x_max = 10)
+wv_main <- glove$fit_transform(fcmat, n_iter = 15, convergence_tol = 0.01, n_threads = 8)
+wv_context <- glove$components
+dim(wv_context)
+dim(wv_main)
+word_vectors <- wv_main + t(wv_context)
+
+#visualize map of word embeddings
+library(uwot)
+word2vec_umap <- umap(word_vectors, n_components = 2, metric = "cosine", n_neighbors = 100, min_dist = 0, spread = 1)
+df_word2vec_umap <- as.data.frame(word2vec_umap, stringsAsFactors = FALSE)
+df_word2vec_umap$word <- rownames(word_vectors)
+colnames(df_word2vec_umap) <- c("UMAP1", "UMAP2", "word")
+df_word2vec_umap$technique <- 'Word2Vec'
+cat(paste0(‘Our Word2Vec embedding reduced to 2 dimensions:’, ‘\n’))
+str(df_word2vec_umap)
+
+#to plot the embedding with ‘foe’ and ‘write’ highlighted
+library(dplyr)
+library(ggplot2)
+
+#plot the base embedding (3845 words)
+token <- "foe"
+embedding_vector <- t(matrix(word_vectors[token, ]))
+cos_sim = sim2(x = word_vectors, y = embedding_vector, method = “cosine”, norm = “l2”)
+select <- data.frame(rownames(as.data.frame(head(sort(cos_sim[,1], decreasing = TRUE), 3845))))
+colnames(select) <- "word"
+selected_words % inner_join(y=select, by= “word”, match = “all”)
+
+#find 40 words around the word ‘foe’
+token_f <- "foe"
+embedding_vector_f <- t(matrix(word_vectors[token_f, ]))
+cos_sim = sim2(x = word_vectors, y = embedding_vector_f, method = “cosine”, norm = “l2”)
+select_f <- data.frame(rownames(as.data.frame(head(sort(cos_sim[ ,1], decreasing = TRUE), 40))))
+colnames(select_f) <- "word"
+select_words_f % inner_join(y=select_f, by= “word”, match = “all”)
+
+#find 40 words around the word ‘write’
+token_w <- "write"
+embedding_vector_w <- t(matrix(word_vectors[token_w, ]))
+cos_sim = sim2(x = word_vectors, y = embedding_vector_w, method = “cosine”, norm = “l2”)
+select_w <- data.frame(rownames(as.data.frame(head(sort(cos_sim[ ,1], decreasing = TRUE), 40))))
+colnames(select_w) <- "word"
+select_words_w % inner_join(y=select_w, by= “word”, match = “all”)
+
+#plot
+foe_and_write_emb <- ggplot(df_word2vec_umap) +
+geom_point(aes(x = UMAP1, y = UMAP2), colour = ‘dark gray’, size = 3.5, alpha = 1/3) +
+theme_void() +
+geom_point(data = select_words_f, aes(x = UMAP1, y = UMAP2), color = “red”, size = 3.5) +
+geom_point(data = select_words_w, aes(x = UMAP1, y = UMAP2), color = “blue”, size = 3.5)
+
+foe_and_write_emb
+
+#code for table 3 – nearest ten words to each of the top-weighted words of Coetzee’s Foe.
+library(quanteda.textmodels)
+library(quanteda.textstats)
+feature <- word_vectors["tongue", , drop = FALSE] #change word of interest as required (here, "tongue")
+cos_sim <- textstat_simil(x = as.dfm(word_vectors), y = as.dfm(feature), method = "cosine")
+head(sort(cos_sim[, 1], decreasing = TRUE), 10)
+
+#code for figure 3 – a section network of Coetzee’s Foe, partitioned at 400 words.
+mt_b <- dfm_trim(dfm_toks, min_termfreq = 5)
+sim_b <- textstat_proxy(mt_b, margin = "documents", method = "cosine")
+textplot_network(quanteda:::as.fcm(as(sim_b, “dgTMatrix”)), min_freq = 0.97, omit_isolated = TRUE, edge_color = “#768aa5”, edge_alpha = 0.5, edge_size = 1, vertex_color = “#536174”, vertex_size = 2, vertex_labelcolor = “#000000”, vertex_labelfont = NULL, vertex_labelsize = 3, offset = NULL)
+
+#code for table 4 – top ten words (weighted by TD-IDF) of the most semantically related sections of
+Coetzee’s Foe.
+#see code for table 2 above.
+
+#code for table 5 – most semantically connected sections of Coetzee’s Foe and the sections to which they are related (with highest TF-IDF weighted feature).
+#create this by counting the number of edges of each node. If there are too many to count then increase the ‘min_freq’ value in the code for figure 3, above.
+
+#code for table 6 – five most coherent topics in Coetzee’s Foe.
+input.dir <- "…" #add the route to your working directory
+files.v <- dir(input.dir, "*.txt") #change file extension as required
+chunk.size <- 400
+makeFlexTextChunks <- function(doc.object, chunk.size=400, percentage=TRUE){
+words.lower <- tolower(paste(doc.object, collapse=" "))
+words.lower <- gsub("[^[:alnum:][:space:]']", " ", words.lower)
+words.l <- strsplit(words.lower, "\\s+")
+word.v <- unlist(words.l)
+x <- seq_along(word.v)
+
+if(percentage){
+max.length <- length(word.v)/chunk.size
+chunks.l <- split(word.v, ceiling(x/max.length))
+}
+else {
+chunks.l <- split(word.v, ceiling(x/chunk.size))
+#deal with small chunks at the end
+if(length(chunks.l[[length(chunks.l)]]) <=
+length(chunks.l[[length(chunks.l)]])/2){
+chunks.l[[length(chunks.l)-1]] <-
+c(chunks.l[[length(chunks.l)-1]],
+chunks.l[[length(chunks.l)]])
+chunks.l[[length(chunks.l)]] <- NULL
+}
+}
+chunks.l <- lapply(chunks.l, paste, collapse=" ")
+chunks.df <- do.call(rbind, chunks.l)
+return(chunks.df)
+}
+
+topic.m <- NULL
+for(i in 1:length(files.v)){
+doc.object <- scan(paste(input.dir, files.v[i], sep="/"), what="character", sep="\n")
+chunk.m <- makeFlexTextChunks(doc.object, chunk.size, percentage=FALSE)
+segments.m <- cbind(paste(segment = 1:nrow(chunk.m)), chunk.m)
+topic.m <- rbind(topic.m, segments.m)
+}
+
+documents <- as.data.frame(topic.m, stringsAsFactors=F)
+colnames(documents) <- c("id", "text")
+documents$id = as.numeric(documents$id)
+
+library(tidytext)
+library(tidyr)
+library(dplyr)
+
+data <- documents
+
+text_cleaning_tokens %
+tidytext::unnest_tokens(word, text)
+text_cleaning_tokens$word <- gsub('[[:digit:]]+', '', text_cleaning_tokens$word)
+text_cleaning_tokens$word <- gsub('[[:punct:]]+', '', text_cleaning_tokens$word)
+text_cleaning_tokens % filter(!(nchar(word) == 1))%>%
+anti_join(stop_words)
+tokens % filter(!(word==””))
+tokens % mutate(ind = row_number())
+tokens % group_by(id) %>% mutate(ind = row_number()) %>%
+tidyr::spread(key = ind, value = word)
+tokens [is.na(tokens)] <- ""
+tokens <- tidyr::unite(tokens, text,-id,sep =" " )
+tokens$text <- trimws(tokens$text)
+
+library(textmineR)
+#create DTM
+dtm <- CreateDtm(tokens$text, doc_names = tokens$id, ngram_window = c(1, 2))
+tf <- TermDocFreq(dtm = dtm)
+original_tf % select(term, term_freq, doc_freq)
+rownames(original_tf) <- 1:nrow(original_tf)
+vocabulary_dtm 1 & tf$doc_freq < nrow(dtm) / 2 ]
+dtm = dtm
+
+#determine value for k
+#There are many ways to determine this value. Use your preferred method
+k_list <- seq(10,80, by=10)
+model_dir <- paste0("models_", digest::digest(colnames(dtm), algo = "sha1"))
+model_list <- TmParallelApply(X = k_list, FUN = function(k){
+m <- FitLdaModel(dtm = dtm, k = k, iterations = 250, burnin = 180, alpha = 0.1, beta = colSums(dtm) / sum(dtm) * 100, optimize_alpha = TRUE, calc_likelihood = FALSE, calc_coherence = TRUE, calc_r2 = FALSE, cpus = 1)
+m$k <- k
+m
+}, export= ls(),
+cpus = 2)
+coherence_mat <- data.frame(k = sapply(model_list, function(x) nrow(x$phi)), coherence = sapply(model_list, function(x) mean(x$coherence)), stringsAsFactors = FALSE)
+coherence_mat
+
+#to plot
+plot(coherence_mat, type = “o”, xaxt=”n”)
+axis(1, at = seq(10, 80, by = 10), las=2)
+
+set.seed(12345)
+model <- FitLdaModel(dtm = dtm, k = 40, iterations = 500, burnin = 180, alpha = 0.1, beta = 0.05, optimize_alpha = TRUE, calc_likelihood = TRUE, calc_coherence = TRUE, calc_r2 = TRUE, cpus = 2)
+
+#create data frame to plot (here we plot the coherence string)
+cm <- data.frame(model$coherence)
+
+#create x axis vector length (with the number of topics modelled – ie. the k value determined above)
+xlen <- 1:40
+
+library(ggplot2)
+ggplot(cm, aes(x = xlen, y = model.coherence)) +
+geom_point() +
+geom_line(group = 1) +
+ggtitle(“Best Topic by Coherence Score”) + theme_minimal() +
+scale_x_continuous(breaks = seq(1,40,1)) + ylab(“Coherence”)
+
+#to get the top terms of each topic
+model$top_terms <- GetTopTerms(phi = model$phi, M = 10) #reports 10 terms for each topic
+model$top_terms
+
+#the prevalence of each topic
+model$prevalence <- colSums(model$theta) / sum(model$theta) * 100
+model$prevalence
+
+#to plot prevalence. Prevalence proportional to alpha
+plot(model$prevalence, model$alpha, xlab = “prevalence”, ylab = “alpha”)
+
+#native topic labelling
+model$labels 0.15, dtm = dtm, M = 1)
+model$labels
+
+#to bring these three metrics together in table form (ordered by coherence)
+model$summary <- data.frame(topic = rownames(model$phi), label = model$labels, coherence = round(model$coherence, 3), prevalence = round(model$prevalence,3), top_terms = apply(model$top_terms, 2, function(x){ paste(x, collapse = ", ")}),stringsAsFactors = FALSE)
+
+#returns the 10 ‘top_terms’
+model$summary[order(model$summary$coherence, decreasing = TRUE), ][1:5, ]
+
+#code for figure 5 – theta for topic 24 in Coetzee’s Foe.
+plot(model$theta[ ,24], type = “l”, main=”Theta for Topic 24 across Foe”,
+xlab=”section”, ylab=”value”,
+xlim=c(0, 114), ylim=c(0, 0.8))
+
+#to view theta of a topic (24) and view relevant section of the text
+model$theta[ ,24]
+data$text[24]
+
+#code for table 7 – five most prevalent topics in Coetzee’s Foe.
+model$summary[order(model$summary$prevalence, decreasing = TRUE), ][1:5, ]
+
+#code for figure 6 – theta for topic 25 in Coetzee’s Foe.
+plot(model$theta[ ,25], type = “l”, main=”Theta for Topic 25 across Foe”,
+xlab=”section”, ylab=”value”,
+xlim=c(0, 114), ylim=c(0, 0.8))
+
+model$theta[ ,25]
