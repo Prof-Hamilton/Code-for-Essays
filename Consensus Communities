@@ -1,0 +1,1585 @@
+# Consensus Communities: Code Repository
+
+This repository contains the computational code for:
+
+**Hamilton, G. & Sorensen, E.P. (2025).** "Consensus communities: emergent literary communities and the challenge to genre." *Digital Scholarship in the Humanities*. https://doi.org/10.1093/llc/fqaf139
+
+## Overview
+
+This code implements a novel computational methodology for understanding literary works within their corpus contexts. 
+The "consensus communities" framework enables texts to self-organize based purely on textual affinities, challenging traditional literary taxonomies such as genre, period, and style.
+
+The methodology integrates:
+- **Louvain community detection** for network-based clustering
+- **HDBSCAN clustering** for density-based analysis
+- **Structural Topic Modelling (STM)** for identifying semantic patterns
+- **Sentence embeddings** for passage-level analysis
+
+## Sections
+
+### Section A. `Literary_Field_Dynamics_Code.R`
+
+Implements the core consensus communities framework:
+- Constructs hybrid field tensors from textual relationships
+- Applies consensus matrix approach combining Louvain and HDBSCAN
+- Identifies robust literary communities across algorithmic variations
+- Visualizes community structure
+
+**Key Functions:**
+- `calculate_hybrid_field_tensor()` - Builds multidimensional field representation
+- `hybrid_stability_analysis()` - Assesses community stability across iterations
+- `plot_hybrid_communities_2d()` - Visualizes community structure
+- `analyze_hybrid_communities()` - Calculates community metrics
+
+### Section B. `Community_Analysis_Code.R`
+
+Maps abstract community patterns onto concrete textual passages:
+- Uses STM to identify computational signatures across community texts
+- Creates topic vectors weighted by FREX word probabilities
+- Calculates similarity between topic vectors and target text sentences
+- Identifies "hotspots" where multiple topics converge
+
+**Key Features:**
+- Automatic K selection for optimal topic number
+- LLM-assisted topic naming (requires local Ollama instance)
+- Passage extraction based on semantic similarity
+- Hotspot detection for multi-topic convergence zones
+
+## Requirements
+
+### R Version
+- Code was developed using R version 4.2.2 ("Innocent and Trusting")
+- May require adjustments for other R versions
+
+### Required R Packages
+
+**For Literary Field Dynamics:**
+```r
+Matrix
+igraph
+dbscan
+cluster
+tidyverse
+fields
+ggplot2
+```
+
+**For Community Analysis:**
+```r
+quanteda
+stm
+udpipe
+dplyr
+tidyr
+stringr
+tokenizers
+httr
+jsonlite
+ggplot2
+```
+
+### Additional Requirements
+
+**For LLM topic naming (optional):**
+- Local Ollama installation with embedding model
+- Default model: `pankajrajdeo/sentence-transformers_all-minilm-l6-v2`
+- Can be disabled by setting `USE_LLM_NAMING <- FALSE`
+
+## Data Requirements
+
+Both scripts require pre-processed input data from preparatory analyses. The following objects must be prepared:
+
+### For Literary Field Dynamics:
+- `adj_matrix`: Adjacency matrix of cosine similarities between texts
+- `centrality_measures`: Data frame with eigenvector centrality scores
+- `result_dfr`: Data frame with semantic disruption scores  
+- `metadata`: Data frame linking text titles to short names
+- `corpus_sub_sub`: Corpus object containing the texts
+
+### For Community Analysis:
+- `corpus_sub_sub`: Corpus object with all texts
+- Pre-computed sentence embeddings for all chunks (in `.RData` format)
+- Chunk IDs and text metadata
+
+**Note:** Code to generate these input objects will be made publicly available when the companion essay is published (exp.2026).
+
+## Usage
+
+### Basic Workflow
+
+1. **Prepare your data** according to the requirements above
+
+2. **Set working directory and parameters** in the script headers:
+```r
+setwd("path/to/your/directory")
+```
+
+3. **Run Literary Field Dynamics** to identify communities:
+```r
+source("Literary_Field_Dynamics_Code.R")
+```
+
+4. **Run Community Analysis** on specific texts:
+```r
+source("Community_Analysis_Code.R")
+```
+
+### Customization
+
+Both scripts include extensive configuration parameters at the top:
+
+**Literary Field Dynamics:**
+- `seed_no` - Random seed for reproducibility
+- Stability analysis iterations
+
+**Community Analysis:**
+- `NUM_TOP_TOPICS_DOC` - Number of top topics to analyze
+- `SPIKE_PERCENTILE` - Threshold for identifying hotspots
+- `AUTO_K_RUN` - Enable/disable automatic K selection
+- `USE_LLM_NAMING` - Enable/disable LLM topic naming
+
+## Output
+
+### Literary Field Dynamics produces:
+- Community assignments for all texts
+- Stability metrics (consistency scores)
+- Network visualization of community structure
+- Community analysis (size, density, influence scores)
+
+### Community Analysis produces:
+- Top topics for target text (ranked by similarity)
+- Representative passages for each topic
+- Convergence hotspots (passages where multiple topics spike)
+- Smoothed visualization of topic profiles across text
+
+## Citation
+
+If you use this code in your research, please cite:
+
+```bibtex
+@article{hamilton2025consensus,
+  title={Consensus communities: emergent literary communities and the challenge to genre},
+  author={Hamilton, Grant and Sorensen, Eli Park},
+  journal={Digital Scholarship in the Humanities},
+  year={2025},
+  doi={10.1093/llc/fqaf139}
+}
+```
+
+## License
+
+This code is provided under the Creative Commons Attribution License (CC BY 4.0), matching the license of the published article. You are free to use, adapt, and distribute this code for any purpose, provided you give appropriate credit.
+
+## Contact
+
+For questions or issues, please contact:
+- Grant Hamilton: hamilton@cuhk.edu.hk
+- Department of English, Chinese University of Hong Kong
+
+## Acknowledgments
+
+This research was conducted as part of "The African Literary Archive – A Computational Analysis of Literary Influence" (2023–25), funded by Hong Kong's University Grants Committee (UGC) through the General Research Fund (project code: 14614522).
+
+## Notes
+
+- The code prioritizes clarity and reproducibility over computational efficiency
+- Some operations may be time-intensive for large corpora
+- Memory requirements scale with corpus size
+- Parallel processing options are available in STM functions
+
+## Version History
+
+- **Version 1.0** (December 2025): Initial public release accompanying journal publication
+
+
+# Section A. `Literary_Field_Dynamics_Code.R`
+
+# ==============================================================================
+# Consensus Communities: Emergent Literary Communities and the Challenge to Genre
+# ==============================================================================
+# 
+# This code implements the 'consensus communities' framework described in:
+# Hamilton, G. & Sorensen, E.P. (2025). "Consensus communities: emergent literary 
+# communities and the challenge to genre." Digital Scholarship in the Humanities.
+# https://doi.org/10.1093/llc/fqaf139
+#
+# The framework integrates Louvain community detection with HDBSCAN clustering
+# to identify robust literary communities based purely on textual affinities.
+# This approach enables texts to self-organize independently of traditional
+# taxonomic categories such as genre, period, or style.
+#
+# Note: This code was written under R version 4.2.2. If you are using a different
+# version, you may need to adjust certain elements to ensure functionality.
+#
+# You are welcome to use or adapt this code for your own projects.
+# ==============================================================================
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+# Set working directory
+setwd("...") # Set your working directory
+
+# Set global seed for reproducibility
+seed_no <- 43
+
+# [PLACEHOLDER: The following objects are required inputs from preparatory analysis.
+#  Code to generate these will be made publicly available when the companion
+#  methodological essay is published:
+#  - adj_matrix: Adjacency matrix of cosine similarities between texts
+#  - centrality_measures: Data frame with eigenvector centrality scores
+#  - result_dfr: Data frame with semantic disruption scores
+#  - metadata: Data frame linking text titles to short names
+#  - corpus_sub_sub: Corpus object containing the texts]
+
+# ==============================================================================
+# SECTION 2: Load Required Libraries
+# ==============================================================================
+
+library(Matrix)      # Sparse matrix operations
+library(igraph)      # Network analysis and community detection
+library(dbscan)      # HDBSCAN density-based clustering
+library(cluster)     # Clustering algorithms
+library(tidyverse)   # Data manipulation and visualization
+library(fields)      # Spatial data analysis
+library(ggplot2)     # Advanced plotting
+
+# ==============================================================================
+# SECTION 3: Utility Functions
+# ==============================================================================
+
+# Function to normalize vectors (L2 normalization)
+normalize_vectors <- function(vectors) {
+    if(is.null(dim(vectors))) {
+        # Handle single vector case
+        norm <- sqrt(sum(vectors^2))
+        if(norm == 0) return(vectors)
+        return(vectors/norm)
+    } else {
+        # Handle matrix case
+        norms <- sqrt(rowSums(vectors^2))
+        norms[norms == 0] <- 1  # Prevent division by zero
+        normalized <- sweep(vectors, 1, norms, "/")
+        return(normalized)
+    }
+}
+
+# Function to prepare and align input data
+prepare_data <- function(adj_matrix, centrality_measures, result_dfr, metadata) {
+    # Create name mapping from metadata
+    name_mapping <- setNames(metadata$short_name, metadata$title)
+    
+    # Map to short names
+    adj_short_names <- name_mapping[rownames(adj_matrix)]
+    centrality_short_names <- name_mapping[centrality_measures$name]
+    
+    # Find texts common to all datasets
+    common_texts <- intersect(
+        intersect(
+            adj_short_names[!is.na(adj_short_names)],
+            centrality_short_names[!is.na(centrality_short_names)]
+        ),
+        result_dfr$short_name
+    )
+    
+    # Get indices in centrality_measures order
+    centrality_indices <- which(centrality_short_names %in% common_texts)
+    common_texts_ordered <- centrality_short_names[centrality_indices]
+    
+    # Get original names for adj_matrix using ordered common_texts
+    adj_orig_names <- rownames(adj_matrix)[match(common_texts_ordered, adj_short_names)]
+    
+    # Align all data structures
+    adj_aligned <- adj_matrix[adj_orig_names, adj_orig_names]
+    centrality_aligned <- centrality_measures[centrality_indices, ]
+    disruption_aligned <- result_dfr[match(common_texts_ordered, result_dfr$short_name), ]
+    
+    return(list(
+        adj = adj_aligned,
+        centrality = centrality_aligned$eigenvector,
+        disruption = disruption_aligned$comp_w_decay,
+        text_names = common_texts_ordered
+    ))
+}
+
+# ==============================================================================
+# SECTION 4: Core Analysis Functions
+# ==============================================================================
+
+# -----------------------------------------------------------------------------
+# Calculate Hybrid Field Tensor
+# -----------------------------------------------------------------------------
+# This function constructs a multidimensional representation of the literary
+# field by integrating network topology, semantic disruption, and community
+# influence. It applies both Louvain and HDBSCAN clustering algorithms and
+# synthesizes their results through a consensus matrix.
+
+calculate_hybrid_field_tensor <- function(centrality, disruption, adj_matrix, 
+                                         corpus_sub_sub, seed_no) {
+    set.seed(seed_no)
+    n <- length(centrality)
+    
+    # Normalize centrality and disruption scores to [0,1]
+    norm_centrality <- (centrality - min(centrality)) / (max(centrality) - min(centrality))
+    norm_disruption <- (disruption - min(disruption)) / (max(disruption) - min(disruption))
+    
+    # Calculate network potential matrix
+    # Each cell represents influence of one text upon another, modulated by centrality
+    network_potential <- Matrix::Matrix(0, nrow=n, ncol=n)
+    for(i in 1:n) {
+        for(j in 1:n) {
+            if(i != j) {
+                network_potential[i,j] <- adj_matrix[i,j] * norm_centrality[i]
+            }
+        }
+    }
+    
+    # Construct three-dimensional feature space
+    features <- data.frame(
+        eigenvector = norm_centrality,
+        disruption = norm_disruption,
+        community_influence = normalize_vectors(as.vector(rowSums(network_potential)))
+    )
+    
+    # Apply Louvain community detection on similarity network
+    g <- graph_from_adjacency_matrix(adj_matrix, weighted = TRUE, mode = "undirected")
+    set.seed(seed_no)
+    louvain_communities <- cluster_louvain(g)
+    
+    # Apply HDBSCAN on three-dimensional feature space
+    set.seed(seed_no)
+    hdb <- hdbscan(as.matrix(features), minPts = 3)
+    
+    # Construct consensus matrix
+    consensus_matrix <- matrix(0, n, n)
+    
+    # Add Louvain assignments to consensus
+    louvain_membership <- membership(louvain_communities)
+    for(i in 1:n) {
+        for(j in 1:n) {
+            if(louvain_membership[i] == louvain_membership[j]) {
+                consensus_matrix[i,j] <- consensus_matrix[i,j] + 1
+            }
+        }
+    }
+    
+    # Add HDBSCAN assignments to consensus
+    for(i in 1:n) {
+        for(j in 1:n) {
+            if(hdb$cluster[i] == hdb$cluster[j] && hdb$cluster[i] != 0) {
+                consensus_matrix[i,j] <- consensus_matrix[i,j] + 1
+            }
+        }
+    }
+    
+    # Normalize consensus matrix
+    consensus_matrix <- consensus_matrix / 2
+    
+    # Apply Louvain to consensus matrix for final community assignments
+    consensus_graph <- graph_from_adjacency_matrix(consensus_matrix, 
+                                                   mode = "undirected", 
+                                                   weighted = TRUE)
+    set.seed(seed_no)
+    final_communities <- cluster_louvain(consensus_graph)
+    community_membership <- membership(final_communities)
+    
+    # Calculate community influence for each text
+    community_influence <- sapply(1:n, function(i) {
+        same_community <- which(community_membership == community_membership[i])
+        mean(network_potential[i, same_community] * consensus_matrix[i, same_community])
+    })
+    
+    # Return field tensor components
+    field_tensor <- list(
+        network = network_potential,
+        semantic = norm_disruption,
+        community = community_membership,
+        community_influence = community_influence,
+        consensus_matrix = consensus_matrix,
+        combined = network_potential * outer(norm_disruption, rep(1, n))
+    )
+    
+    return(field_tensor)
+}
+
+# -----------------------------------------------------------------------------
+# Stability Analysis
+# -----------------------------------------------------------------------------
+# Runs the community detection process multiple times with different random
+# seeds to assess the stability of community assignments.
+
+hybrid_stability_analysis <- function(centrality, disruption, adj_matrix, 
+                                     corpus_sub_sub, n_iterations = 100, seed_no) {
+    set.seed(seed_no)
+    n <- length(centrality)
+    membership_matrix <- matrix(0, nrow = n_iterations, ncol = n)
+    community_sizes <- numeric(n_iterations)
+    
+    # Run community detection n_iterations times
+    for(i in 1:n_iterations) {
+        iter_seed <- seed_no + i
+        field_tensor <- calculate_hybrid_field_tensor(centrality, disruption, 
+                                                      adj_matrix, corpus_sub_sub,
+                                                      seed_no = iter_seed)
+        community_sizes[i] <- length(unique(field_tensor$community))
+        membership_matrix[i,] <- field_tensor$community
+    }
+    
+    # Calculate consistency: % of iterations each text was in its most common community
+    consistency <- apply(membership_matrix, 2, function(x) {
+        counts <- table(factor(x, levels = 1:max(membership_matrix)))
+        sorted_counts <- sort(counts, decreasing = TRUE)
+        return(sorted_counts[1] / n_iterations)
+    })
+    
+    return(list(
+        avg_communities = mean(community_sizes),
+        sd_communities = sd(community_sizes),
+        node_consistency = consistency
+    ))
+}
+
+# ==============================================================================
+# SECTION 5: Visualization Functions
+# ==============================================================================
+
+# -----------------------------------------------------------------------------
+# Plot Community Structure
+# -----------------------------------------------------------------------------
+# Creates a network visualization showing consensus community assignments.
+
+plot_hybrid_communities_2d <- function(results, seed_no) {
+    # Create graph from consensus matrix
+    g <- graph_from_adjacency_matrix(results$field_tensor$consensus_matrix,
+                                     weighted = TRUE,
+                                     mode = "undirected")
+    
+    # Generate layout using Fruchterman-Reingold algorithm
+    set.seed(seed_no)
+    layout <- layout_with_fr(g)
+    
+    communities <- results$field_tensor$community
+    n_communities <- length(unique(communities))
+    
+    # Prepare node data
+    nodes_df <- data.frame(
+        x = layout[, 1],
+        y = layout[, 2],
+        community = factor(communities)
+    )
+    
+    # Prepare edge data
+    edges <- get.edgelist(g)
+    weights <- E(g)$weight
+    norm_weights <- (weights - min(weights)) / (max(weights) - min(weights))
+    norm_weights <- norm_weights * 0.8 + 0.2  # Scale to [0.2, 1]
+    
+    edges_df <- data.frame(
+        x_start = layout[edges[, 1], 1],
+        y_start = layout[edges[, 1], 2],
+        x_end = layout[edges[, 2], 1],
+        y_end = layout[edges[, 2], 2],
+        weight = norm_weights
+    )
+    
+    # Calculate convex hulls for each community
+    hull_df <- data.frame()
+    for (comm_val in unique(communities)) {
+        comm_nodes <- nodes_df[nodes_df$community == comm_val, c("x", "y")]
+        if (nrow(comm_nodes) >= 3) {
+            hull_indices <- chull(comm_nodes)
+            hull_coords <- comm_nodes[hull_indices, ]
+            temp_hull_df <- data.frame(
+                x = hull_coords$x,
+                y = hull_coords$y,
+                community = factor(comm_val)
+            )
+            hull_df <- rbind(hull_df, temp_hull_df)
+        }
+    }
+    
+    # Create plot
+    p <- ggplot() +
+        # Edges
+        geom_segment(data = edges_df,
+                     aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+                     color = "grey70", alpha = 0.3,
+                     linewidth = edges_df$weight) +
+        # Community polygons
+        geom_polygon(data = hull_df,
+                     aes(x = x, y = y, fill = community, group = community),
+                     alpha = 0.2) +
+        # Nodes
+        geom_point(data = nodes_df,
+                   aes(x = x, y = y, color = community),
+                   shape = 19, size = 2) +
+        # Styling
+        scale_colour_hue(name = "Communities") +
+        scale_fill_hue(name = "Communities") +
+        theme_minimal() +
+        labs(title = "Consensus Community Structure", x = NULL, y = NULL) +
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.text.x = element_blank(),
+              axis.text.y = element_blank(),
+              axis.ticks = element_blank(),
+              legend.position = "right")
+    
+    return(p)
+}
+
+# -----------------------------------------------------------------------------
+# Analyze Community Properties
+# -----------------------------------------------------------------------------
+# Calculates metrics for each community including internal density,
+# spatial coherence, and external connections.
+
+analyze_hybrid_communities <- function(g, field_tensor, texts_positions, text_names) {
+    communities <- unique(field_tensor$community)
+    community_analysis <- list()
+    
+    for(comm in communities) {
+        # Get members of this community
+        comm_members <- which(field_tensor$community == comm)
+        
+        # Calculate internal density (average consensus within community)
+        internal_density <- mean(field_tensor$consensus_matrix[comm_members, comm_members])
+        
+        # Calculate average spatial distance between members
+        comm_positions <- texts_positions[comm_members,, drop=FALSE]
+        if(length(comm_members) > 1) {
+            distances <- dist(comm_positions) |> as.matrix()
+            avg_spatial_distance <- mean(distances[upper.tri(distances)])
+        } else {
+            avg_spatial_distance <- 0
+        }
+        
+        # Calculate centroid position
+        centroid <- if(length(comm_members) > 1) {
+            colMeans(comm_positions)
+        } else {
+            comm_positions[1,]
+        }
+        
+        # Calculate external connections to other communities
+        external_connections <- sapply(communities, function(other_comm) {
+            if(other_comm != comm) {
+                other_members <- which(field_tensor$community == other_comm)
+                mean(field_tensor$consensus_matrix[comm_members, other_members])
+            } else {
+                NA
+            }
+        })
+        
+        # Store results
+        community_analysis[[comm]] <- list(
+            members = text_names[comm_members],
+            size = length(comm_members),
+            internal_density = internal_density,
+            avg_spatial_distance = avg_spatial_distance,
+            external_connections = external_connections,
+            centroid = centroid,
+            influence_scores = field_tensor$community_influence[comm_members]
+        )
+    }
+    
+    return(community_analysis)
+}
+
+# ==============================================================================
+# SECTION 6: Main Processing Functions
+# ==============================================================================
+
+# -----------------------------------------------------------------------------
+# Process Hybrid Literary Field
+# -----------------------------------------------------------------------------
+# Main function that orchestrates the complete analysis pipeline.
+
+process_hybrid_literary_field <- function(adj_matrix, centrality, disruption, 
+                                         text_names, corpus_sub_sub, seed_no) {
+    # Run stability analysis
+    stability_results <- hybrid_stability_analysis(centrality, disruption, 
+                                                   adj_matrix, corpus_sub_sub,
+                                                   seed_no = seed_no)
+    
+    cat("\nStability Analysis Results:\n")
+    cat(sprintf("Average number of communities: %.2f (SD: %.2f)\n", 
+                stability_results$avg_communities, 
+                stability_results$sd_communities))
+    cat(sprintf("Average node consistency: %.2f\n", 
+                mean(stability_results$node_consistency)))
+    
+    # Calculate field tensor with final seed
+    field_tensor <- calculate_hybrid_field_tensor(centrality, disruption, 
+                                                  adj_matrix, corpus_sub_sub,
+                                                  seed_no = seed_no)
+    
+    # Generate multidimensional scaling representation
+    mds <- cmdscale(1 - field_tensor$consensus_matrix, k=3)
+    
+    # Create graph for analysis
+    g <- graph_from_adjacency_matrix(field_tensor$consensus_matrix, 
+                                     weighted = TRUE, 
+                                     mode = "undirected")
+    
+    # Analyze community properties
+    community_results <- analyze_hybrid_communities(g, field_tensor, 
+                                                    mds, text_names)
+    
+    return(list(
+        field_tensor = field_tensor,
+        positions = mds,
+        stability = stability_results,
+        community_analysis = community_results
+    ))
+}
+
+# -----------------------------------------------------------------------------
+# Run Complete Analysis
+# -----------------------------------------------------------------------------
+# Wrapper function that prepares data and runs the full analysis pipeline.
+
+run_hybrid_literary_field_analysis <- function(adj_matrix, centrality_measures, 
+                                               result_dfr, metadata, corpus_sub_sub,
+                                               seed_no) {
+    # Prepare and align input data
+    prepared_data <- prepare_data(adj_matrix, centrality_measures, result_dfr, metadata)
+    
+    # Run analysis
+    results <- process_hybrid_literary_field(
+        adj_matrix = prepared_data$adj,
+        centrality = prepared_data$centrality,
+        disruption = prepared_data$disruption,
+        text_names = prepared_data$text_names,
+        corpus_sub_sub = corpus_sub_sub,
+        seed_no = seed_no
+    )
+    
+    return(results)
+}
+
+# ==============================================================================
+# SECTION 7: Execute Analysis
+# ==============================================================================
+
+# Run the complete analysis
+results <- run_hybrid_literary_field_analysis(
+    adj_matrix = adj_matrix,
+    centrality_measures = centrality_measures,
+    result_dfr = result_dfr,
+    metadata = metadata,
+    corpus_sub_sub = corpus_sub_sub,
+    seed_no = seed_no
+)
+
+# Create visualization
+plot_hybrid_communities_2d(results, seed_no)
+
+# Print community analysis results
+for(i in seq_along(results$community_analysis)) {
+    comm <- results$community_analysis[[i]]
+    cat(sprintf("\nCommunity %d:\n", i))
+    cat(sprintf("Size: %d texts\n", comm$size))
+    cat(sprintf("Internal density: %.3f\n", comm$internal_density))
+    
+    # Display members in original order
+    cat("Members:", paste(comm$members, collapse = ", "), "\n")
+    
+    # Display most influential texts
+    influence_order <- order(comm$influence_scores, decreasing = TRUE)
+    top_n <- min(3, length(influence_order))
+    cat("Most influential texts:\n")
+    for(j in 1:top_n) {
+        idx <- influence_order[j]
+        cat(sprintf("  %d. %s (influence: %.3f)\n", 
+                    j, comm$members[idx], comm$influence_scores[idx]))
+    }
+}
+
+
+# Section B. `Community_Analysis_Code.R`
+
+# ==============================================================================
+# Community Concept Analysis Using STM and Pre-computed Embeddings
+# ==============================================================================
+#
+# This code implements the passage-level analysis described in:
+# Hamilton, G. & Sorensen, E.P. (2025). "Consensus communities: emergent literary 
+# communities and the challenge to genre." Digital Scholarship in the Humanities.
+# https://doi.org/10.1093/llc/fqaf139
+#
+# The framework uses Structural Topic Modelling (STM) to identify computational
+# patterns across a literary community, then maps these patterns onto specific
+# passages in a target text using sentence embeddings.
+#
+# Note: This code was written under R version 4.2.2. If you are using a different
+# version, you may need to adjust certain elements to ensure functionality.
+#
+# You are welcome to use or adapt this code for your own projects.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Initial Setup and Configuration
+# ==============================================================================
+
+# Set working directory
+setwd("...") # Set your working directory
+
+# --- Function to Load Specific Objects from Previous Session ---
+# This utility function allows selective loading of objects from saved .RData files
+load_specific_objects <- function(file_path, object_names) {
+  temp_env <- new.env()
+  cat(paste("Loading objects from:", file_path, "\n"))
+
+  if (!file.exists(file_path)) {
+    warning(paste("File not found:", file_path, "- Cannot load objects:", 
+                  paste(object_names, collapse = ", ")))
+    return()
+  }
+
+  load(file_path, envir = temp_env)
+  loaded_objects <- ls(envir = temp_env)
+  copied_count <- 0
+
+  for (obj_name in object_names) {
+    if (obj_name %in% loaded_objects) {
+      assign(obj_name, get(obj_name, envir = temp_env), envir = .GlobalEnv)
+      cat(paste("  - Loaded:", obj_name, "\n"))
+      copied_count <- copied_count + 1
+    } else {
+      warning(paste("Object", obj_name, "not found in", file_path))
+    }
+  }
+
+  if (copied_count == 0 && length(object_names) > 0) {
+    warning("No specified objects were loaded from ", file_path)
+  }
+}
+
+
+# --- Load Base Corpus ---
+# [PLACEHOLDER: This requires a corpus object from preparatory analysis.
+#  Code to generate this will be made publicly available when the companion
+#  methodological essay is published]
+BASE_CORPUS_FILE <- "path/to/your/corpus.RData"
+load_specific_objects(BASE_CORPUS_FILE, c("corpus_sub_sub"))
+
+# Ensure base corpus loaded successfully
+if (!exists("corpus_sub_sub")) {
+  stop("Failed to load 'corpus_sub_sub' from ", BASE_CORPUS_FILE)
+}
+
+
+# ==============================================================================
+# SECTION 2: Configuration Parameters
+# ==============================================================================
+
+cat("\n--- Setting Parameters ---\n")
+
+# --- Input Data & Selection ---
+PART1_RDATA_FILE <- "path/to/precomputed/embeddings.RData"  # File with pre-computed embeddings
+COMMUNITY_SHORT_NAMES <- c("TEXT1", "TEXT2", "TEXT3", "TEXT4", "TEXT5")  # Short names for community texts
+READ_TEXT_SHORT_NAME <- "TEXT1"  # Short name for the text to analyze
+
+# --- STM & Topic Modeling Parameters ---
+NUM_TOP_WORDS <- 10          # Number of FREX words per topic
+STM_MAX_ITER <- 75           # Max iterations for STM EM algorithm
+STM_PREP_THRESHOLD <- 3      # Min word frequency in prepDocuments
+
+# --- Automatic K Selection Parameters ---
+AUTO_K_RUN <- TRUE                      # TRUE to run K selection, FALSE to use fallback
+AUTO_K_COARSE_RANGE <- seq(10, 100, by = 10)  # Initial K values to test
+AUTO_K_FINE_DELTA <- 10                 # How many topics +/- from coarse best K
+AUTO_K_FINE_STEP <- 2                   # Step size for fine K search
+AUTO_K_SEED <- 456                      # Seed for K selection models
+AUTO_K_FALLBACK <- 29                   # K value if AUTO_K_RUN is FALSE
+
+# --- Topic Vector Parameters ---
+USE_STM_WEIGHTING <- TRUE               # Weight sentence embeddings by STM beta?
+MAX_SENTENCES_PER_FREX_WORD <- 5       # Max sentences to embed per FREX word
+
+# --- Passage Analysis Parameters ---
+MIN_SENTENCE_SIMILARITY <- 0.15         # Threshold for similarity scores
+NUM_SENTENCES_TO_SHOW <- 3              # Number of top matching sentences per topic
+CONTEXT_WINDOW <- 3                     # Sentences before/after to show as context
+NUM_TOP_TOPICS_DOC <- 5                 # Number of top topics to analyze
+
+# --- LLM Naming Parameters ---
+USE_LLM_NAMING <- TRUE                  # Use LLM to generate topic names?
+OLLAMA_API_URL <- "http://localhost:11434/api/"  # URL for local Ollama instance
+OLLAMA_GEN_MODEL <- "llama3.2"          # Model for generating topic names
+OLLAMA_EMBED_MODEL_USED <- "pankajrajdeo/sentence-transformers_all-minilm-l6-v2"  # Embedding model
+
+# --- Hotspot Identification Parameters ---
+SPIKE_PERCENTILE <- 0.95                # Percentile threshold for topic spikes
+CONVERGENCE_MIN_TOPICS <- 3             # Min topics spiking simultaneously
+
+
+# ==============================================================================
+# SECTION 3: Load Required Libraries
+# ==============================================================================
+
+cat("\n--- Loading Libraries ---\n")
+library(quanteda)      # Text analysis
+library(stm)           # Structural topic modeling
+library(udpipe)        # NLP preprocessing
+library(dplyr)         # Data manipulation
+library(tidyr)         # Data tidying
+library(stringr)       # String operations
+library(tokenizers)    # Text tokenization
+library(httr)          # HTTP requests for API
+library(jsonlite)      # JSON handling
+library(ggplot2)       # Visualization
+
+
+# ==============================================================================
+# SECTION 4: Load and Validate Pre-computed Data
+# ==============================================================================
+
+cat("\n--- Loading Pre-computed Data ---\n")
+
+# [PLACEHOLDER: The following objects are required from Part 1 analysis.
+#  These contain pre-computed sentence embeddings for all texts in the corpus.
+#  Code to generate these will be made publicly available when the companion
+#  methodological essay is published:
+#  - nigerian_chunk_embeddings_list: Sentence embeddings (nested by chunk)
+#  - nigerian_processed_chunk_ids: Chunk IDs
+#  - nigerian_chunks_df: Data frame with chunk text
+#  - non_nigerian_chunk_embeddings_list: Embeddings for comparison texts
+#  - non_nigerian_processed_chunk_ids: Chunk IDs for comparison texts]
+
+if (!file.exists(PART1_RDATA_FILE)) {
+  stop("Specified .RData file not found: ", PART1_RDATA_FILE)
+}
+
+load(PART1_RDATA_FILE)
+cat("Loaded data from: ", PART1_RDATA_FILE, "\n")
+
+# Combine embeddings into unified lists
+all_chunk_embeddings_list <- list()
+all_processed_chunk_ids <- list()
+
+if (exists("nigerian_chunk_embeddings_list")) {
+    all_chunk_embeddings_list <- c(all_chunk_embeddings_list, nigerian_chunk_embeddings_list)
+    if (exists("nigerian_processed_chunk_ids")) {
+         all_processed_chunk_ids <- c(all_processed_chunk_ids, nigerian_processed_chunk_ids)
+    } else {
+        warning("Missing nigerian_processed_chunk_ids")
+    }
+}
+
+if (exists("non_nigerian_chunk_embeddings_list")) {
+    all_chunk_embeddings_list <- c(all_chunk_embeddings_list, non_nigerian_chunk_embeddings_list)
+    if (exists("non_nigerian_processed_chunk_ids")) {
+         all_processed_chunk_ids <- c(all_processed_chunk_ids, non_nigerian_processed_chunk_ids)
+    } else {
+        warning("Missing non_nigerian_processed_chunk_ids")
+    }
+}
+
+if (length(all_chunk_embeddings_list) == 0) {
+    stop("No chunk embeddings found. Check that PART1_RDATA_FILE contains the required embedding data.")
+}
+
+cat(paste("Total chunks loaded:", length(all_chunk_embeddings_list), "\n"))
+
+
+# ==============================================================================
+# SECTION 5: Ollama API Functions
+# ==============================================================================
+
+# --- Function to Call Ollama Generate API ---
+call_ollama_generate <- function(model_name, prompt, api_url = OLLAMA_API_URL) {
+    endpoint <- paste0(api_url, "generate")
+    
+    body_data <- list(
+        model = model_name,
+        prompt = prompt,
+        stream = FALSE
+    )
+    
+    tryCatch({
+        response <- POST(
+            url = endpoint,
+            body = body_data,
+            encode = "json",
+            timeout(60)
+        )
+        
+        if (status_code(response) == 200) {
+            result <- content(response, as = "parsed", type = "application/json")
+            return(result$response)
+        } else {
+            warning(paste("Ollama API returned status:", status_code(response)))
+            return(NULL)
+        }
+    }, error = function(e) {
+        warning(paste("Error calling Ollama API:", e$message))
+        return(NULL)
+    })
+}
+
+# --- Function to Get Embeddings from Ollama ---
+get_ollama_embeddings <- function(texts, model_name = OLLAMA_EMBED_MODEL_USED, 
+                                 api_url = OLLAMA_API_URL) {
+    endpoint <- paste0(api_url, "embeddings")
+    embeddings_list <- list()
+    
+    for (i in seq_along(texts)) {
+        body_data <- list(
+            model = model_name,
+            prompt = texts[i]
+        )
+        
+        tryCatch({
+            response <- POST(
+                url = endpoint,
+                body = body_data,
+                encode = "json",
+                timeout(60)
+            )
+            
+            if (status_code(response) == 200) {
+                result <- content(response, as = "parsed", type = "application/json")
+                embeddings_list[[i]] <- unlist(result$embedding)
+            } else {
+                warning(paste("Failed to get embedding for text", i))
+                embeddings_list[[i]] <- NULL
+            }
+        }, error = function(e) {
+            warning(paste("Error getting embedding for text", i, ":", e$message))
+            embeddings_list[[i]] <- NULL
+        })
+    }
+    
+    return(embeddings_list)
+}
+
+
+# ==============================================================================
+# SECTION 6: Text Preprocessing and STM Preparation
+# ==============================================================================
+
+cat("\n--- Preparing Texts for STM ---\n")
+
+# --- Extract Community Texts from Corpus ---
+community_texts_indices <- which(corpus_sub_sub$short_name %in% COMMUNITY_SHORT_NAMES)
+community_corpus <- corpus_subset(corpus_sub_sub, short_name %in% COMMUNITY_SHORT_NAMES)
+
+cat(paste("Selected", length(community_texts_indices), "texts for community analysis\n"))
+
+# --- Create Document-Feature Matrix ---
+dfm_community <- dfm(tokens(community_corpus, 
+                            remove_punct = TRUE, 
+                            remove_numbers = TRUE, 
+                            remove_symbols = TRUE),
+                    tolower = TRUE)
+
+# Remove stopwords and apply frequency threshold
+dfm_community <- dfm_remove(dfm_community, stopwords("english"))
+dfm_community <- dfm_trim(dfm_community, min_termfreq = STM_PREP_THRESHOLD)
+
+cat(paste("DFM dimensions:", nrow(dfm_community), "documents x", 
+          ncol(dfm_community), "features\n"))
+
+# --- Prepare Data for STM ---
+stm_data <- convert(dfm_community, to = "stm")
+
+cat("Data prepared for Structural Topic Modeling\n")
+
+
+# ==============================================================================
+# SECTION 7: Automatic K Selection for STM
+# ==============================================================================
+
+cat("\n--- Automatic K Selection ---\n")
+
+if (AUTO_K_RUN) {
+    cat("Running automatic K selection...\n")
+    
+    # --- Phase 1: Coarse Search ---
+    cat("\nPhase 1: Coarse search across K values\n")
+    
+    coarse_results <- data.frame(
+        k = integer(),
+        semantic_coherence = numeric(),
+        exclusivity = numeric(),
+        avg_metric = numeric()
+    )
+    
+    for (k_val in AUTO_K_COARSE_RANGE) {
+        cat(paste("  Testing K =", k_val, "\n"))
+        
+        set.seed(AUTO_K_SEED)
+        model_temp <- stm(documents = stm_data$documents,
+                         vocab = stm_data$vocab,
+                         K = k_val,
+                         max.em.its = STM_MAX_ITER,
+                         init.type = "Spectral",
+                         verbose = FALSE)
+        
+        # Calculate metrics
+        sem_coh <- mean(semanticCoherence(model_temp, stm_data$documents))
+        excl <- mean(exclusivity(model_temp))
+        avg_met <- (sem_coh + excl) / 2
+        
+        coarse_results <- rbind(coarse_results, 
+                               data.frame(k = k_val,
+                                        semantic_coherence = sem_coh,
+                                        exclusivity = excl,
+                                        avg_metric = avg_met))
+    }
+    
+    # Find best K from coarse search
+    best_coarse_k <- coarse_results$k[which.max(coarse_results$avg_metric)]
+    cat(paste("\nBest K from coarse search:", best_coarse_k, "\n"))
+    
+    # --- Phase 2: Fine Search ---
+    cat("\nPhase 2: Fine search around best K\n")
+    
+    fine_k_range <- seq(max(5, best_coarse_k - AUTO_K_FINE_DELTA),
+                        best_coarse_k + AUTO_K_FINE_DELTA,
+                        by = AUTO_K_FINE_STEP)
+    fine_k_range <- unique(fine_k_range[fine_k_range > 0])
+    
+    fine_results <- data.frame(
+        k = integer(),
+        semantic_coherence = numeric(),
+        exclusivity = numeric(),
+        avg_metric = numeric()
+    )
+    
+    for (k_val in fine_k_range) {
+        cat(paste("  Testing K =", k_val, "\n"))
+        
+        set.seed(AUTO_K_SEED)
+        model_temp <- stm(documents = stm_data$documents,
+                         vocab = stm_data$vocab,
+                         K = k_val,
+                         max.em.its = STM_MAX_ITER,
+                         init.type = "Spectral",
+                         verbose = FALSE)
+        
+        sem_coh <- mean(semanticCoherence(model_temp, stm_data$documents))
+        excl <- mean(exclusivity(model_temp))
+        avg_met <- (sem_coh + excl) / 2
+        
+        fine_results <- rbind(fine_results,
+                             data.frame(k = k_val,
+                                      semantic_coherence = sem_coh,
+                                      exclusivity = excl,
+                                      avg_metric = avg_met))
+    }
+    
+    # Select optimal K
+    SELECTED_K <- fine_results$k[which.max(fine_results$avg_metric)]
+    cat(paste("\n*** SELECTED K:", SELECTED_K, "***\n"))
+    
+    # Visualize K selection results
+    ggplot(fine_results, aes(x = k, y = avg_metric)) +
+        geom_line() +
+        geom_point() +
+        geom_vline(xintercept = SELECTED_K, linetype = "dashed", color = "red") +
+        labs(title = "K Selection: Average of Semantic Coherence and Exclusivity",
+             x = "Number of Topics (K)",
+             y = "Average Metric") +
+        theme_minimal()
+    
+} else {
+    SELECTED_K <- AUTO_K_FALLBACK
+    cat(paste("Using fallback K value:", SELECTED_K, "\n"))
+}
+
+
+# ==============================================================================
+# SECTION 8: Fit Final STM Model
+# ==============================================================================
+
+cat("\n--- Fitting Final STM Model ---\n")
+
+set.seed(AUTO_K_SEED)
+final_stm_model <- stm(documents = stm_data$documents,
+                       vocab = stm_data$vocab,
+                       K = SELECTED_K,
+                       max.em.its = STM_MAX_ITER,
+                       init.type = "Spectral",
+                       verbose = TRUE)
+
+cat("\nSTM model fitting complete\n")
+
+# --- Extract Topic Information ---
+# Get FREX words (words that are both frequent and exclusive to topics)
+frex_words_matrix <- labelTopics(final_stm_model, n = NUM_TOP_WORDS)$frex
+
+# Convert to data frame for easier handling
+topics_df <- data.frame(
+    TopicID = 1:SELECTED_K,
+    stringsAsFactors = FALSE
+)
+
+# Add FREX words as columns
+for (i in 1:NUM_TOP_WORDS) {
+    topics_df[[paste0("FREX_", i)]] <- frex_words_matrix[, i]
+}
+
+cat(paste("\nExtracted", NUM_TOP_WORDS, "FREX words for each of", SELECTED_K, "topics\n"))
+
+
+# ==============================================================================
+# SECTION 9: Generate LLM Topic Names
+# ==============================================================================
+
+cat("\n--- Generating Topic Names ---\n")
+
+if (USE_LLM_NAMING) {
+    cat("Using LLM to generate topic names...\n")
+    
+    topics_df$LLM_Name <- NA_character_
+    
+    for (topic_id in 1:SELECTED_K) {
+        frex_words <- unlist(topics_df[topic_id, paste0("FREX_", 1:NUM_TOP_WORDS)])
+        frex_string <- paste(frex_words, collapse = ", ")
+        
+        prompt <- paste0(
+            "Given the following words from a topic model of literary texts: ",
+            frex_string,
+            "\nProvide a concise two-word label that captures the core abstract concept. ",
+            "Respond with ONLY the two-word label, nothing else."
+        )
+        
+        cat(paste("  Generating name for Topic", topic_id, "\n"))
+        
+        llm_response <- call_ollama_generate(
+            model_name = OLLAMA_GEN_MODEL,
+            prompt = prompt
+        )
+        
+        if (!is.null(llm_response)) {
+            clean_name <- str_trim(llm_response)
+            clean_name <- str_replace_all(clean_name, "[[:punct:]]", "")
+            topics_df$LLM_Name[topic_id] <- clean_name
+        } else {
+            topics_df$LLM_Name[topic_id] <- paste("Topic", topic_id)
+        }
+    }
+    
+    cat("Topic names generated successfully\n")
+    
+} else {
+    topics_df$LLM_Name <- paste("Topic", 1:SELECTED_K)
+    cat("Using default topic names\n")
+}
+
+
+# ==============================================================================
+# SECTION 10: Create Topic Vectors from Community Texts
+# ==============================================================================
+
+cat("\n--- Creating Topic Vectors ---\n")
+
+# This section creates vector representations of each topic by:
+# 1. Finding sentences in community texts containing FREX words
+# 2. Getting embeddings for these sentences
+# 3. Weighting embeddings by STM beta probability (if enabled)
+# 4. Averaging to create a single topic vector
+
+topic_vectors_list <- list()
+
+for (topic_id in 1:SELECTED_K) {
+    cat(paste("Processing Topic", topic_id, ":", topics_df$LLM_Name[topic_id], "\n"))
+    
+    frex_words <- unlist(topics_df[topic_id, paste0("FREX_", 1:NUM_TOP_WORDS)])
+    
+    # Get beta probabilities for weighting (if enabled)
+    beta_values <- if (USE_STM_WEIGHTING) {
+        exp(final_stm_model$beta$logbeta[[1]][topic_id, ])
+    } else {
+        rep(1, length(final_stm_model$vocab))
+    }
+    names(beta_values) <- final_stm_model$vocab
+    
+    # Collect sentences containing FREX words
+    sentences_for_embedding <- c()
+    sentence_weights <- c()
+    
+    for (frex_word in frex_words) {
+        word_beta <- beta_values[frex_word]
+        if (is.na(word_beta)) word_beta <- 0
+        
+        # Find sentences containing this word across all community chunks
+        sentence_count <- 0
+        for (chunk_embeddings in all_chunk_embeddings_list) {
+            if (is.null(chunk_embeddings$sentences) || length(chunk_embeddings$sentences) == 0) next
+            
+            matching_indices <- grep(paste0("\\b", frex_word, "\\b"), 
+                                   chunk_embeddings$sentences, 
+                                   ignore.case = TRUE)
+            
+            if (length(matching_indices) > 0 && sentence_count < MAX_SENTENCES_PER_FREX_WORD) {
+                n_to_take <- min(length(matching_indices), 
+                               MAX_SENTENCES_PER_FREX_WORD - sentence_count)
+                selected_indices <- matching_indices[1:n_to_take]
+                
+                sentences_for_embedding <- c(sentences_for_embedding, 
+                                           chunk_embeddings$sentences[selected_indices])
+                sentence_weights <- c(sentence_weights, 
+                                    rep(word_beta, n_to_take))
+                
+                sentence_count <- sentence_count + n_to_take
+            }
+            
+            if (sentence_count >= MAX_SENTENCES_PER_FREX_WORD) break
+        }
+    }
+    
+    # Get embeddings for collected sentences
+    if (length(sentences_for_embedding) > 0) {
+        cat(paste("  Embedding", length(sentences_for_embedding), "sentences\n"))
+        
+        sentence_embeddings <- get_ollama_embeddings(sentences_for_embedding)
+        
+        # Remove any NULL embeddings
+        valid_indices <- sapply(sentence_embeddings, function(x) !is.null(x))
+        sentence_embeddings <- sentence_embeddings[valid_indices]
+        sentence_weights <- sentence_weights[valid_indices]
+        
+        if (length(sentence_embeddings) > 0) {
+            # Convert to matrix and apply weights
+            embedding_matrix <- do.call(rbind, sentence_embeddings)
+            
+            if (USE_STM_WEIGHTING && length(sentence_weights) > 0) {
+                weighted_embeddings <- sweep(embedding_matrix, 1, sentence_weights, "*")
+                topic_vector <- colMeans(weighted_embeddings)
+            } else {
+                topic_vector <- colMeans(embedding_matrix)
+            }
+            
+            topic_vectors_list[[topic_id]] <- topic_vector
+            cat("  Topic vector created successfully\n")
+        } else {
+            warning(paste("No valid embeddings for Topic", topic_id))
+            topic_vectors_list[[topic_id]] <- NULL
+        }
+    } else {
+        warning(paste("No sentences found for Topic", topic_id))
+        topic_vectors_list[[topic_id]] <- NULL
+    }
+}
+
+cat(paste("\nCreated", sum(!sapply(topic_vectors_list, is.null)), 
+          "topic vectors out of", SELECTED_K, "topics\n"))
+
+
+# ==============================================================================
+# SECTION 11: Analyze Target Text
+# ==============================================================================
+
+cat("\n--- Analyzing Target Text ---\n")
+
+# Extract target text from corpus
+target_text_index <- which(corpus_sub_sub$short_name == READ_TEXT_SHORT_NAME)
+if (length(target_text_index) == 0) {
+    stop(paste("Target text", READ_TEXT_SHORT_NAME, "not found in corpus"))
+}
+
+cat(paste("Analyzing:", READ_TEXT_SHORT_NAME, "\n"))
+
+# Get corresponding chunk IDs for target text
+target_chunk_pattern <- paste0("^", READ_TEXT_SHORT_NAME, "_chunk_")
+target_chunk_indices <- grep(target_chunk_pattern, names(all_processed_chunk_ids))
+
+if (length(target_chunk_indices) == 0) {
+    stop(paste("No chunks found for", READ_TEXT_SHORT_NAME))
+}
+
+cat(paste("Found", length(target_chunk_indices), "chunks for target text\n"))
+
+# Extract chunk embeddings and metadata
+target_chunks_list <- all_chunk_embeddings_list[target_chunk_indices]
+target_chunk_ids <- names(all_processed_chunk_ids)[target_chunk_indices]
+
+# Create data frame with chunk information
+target_chunk_df <- data.frame(
+    chunk_id = target_chunk_ids,
+    chunk_index = 1:length(target_chunk_ids),
+    stringsAsFactors = FALSE
+)
+
+
+# ==============================================================================
+# SECTION 12: Calculate Similarity Between Topic Vectors and Target Text
+# ==============================================================================
+
+cat("\n--- Calculating Topic Similarities ---\n")
+
+# For each topic, calculate similarity to each sentence in each chunk
+chunk_topic_similarities <- list()
+
+for (chunk_idx in seq_along(target_chunks_list)) {
+    chunk_data <- target_chunks_list[[chunk_idx]]
+    chunk_id <- target_chunk_ids[chunk_idx]
+    
+    if (is.null(chunk_data$embeddings) || length(chunk_data$embeddings) == 0) {
+        next
+    }
+    
+    # Calculate cosine similarity for each topic
+    topic_similarities <- matrix(NA, 
+                                nrow = length(chunk_data$sentences),
+                                ncol = SELECTED_K)
+    
+    for (topic_id in 1:SELECTED_K) {
+        if (is.null(topic_vectors_list[[topic_id]])) next
+        
+        topic_vec <- topic_vectors_list[[topic_id]]
+        
+        for (sent_idx in seq_along(chunk_data$sentences)) {
+            if (is.null(chunk_data$embeddings[[sent_idx]])) next
+            
+            sent_vec <- chunk_data$embeddings[[sent_idx]]
+            
+            # Cosine similarity
+            similarity <- sum(topic_vec * sent_vec) / 
+                         (sqrt(sum(topic_vec^2)) * sqrt(sum(sent_vec^2)))
+            
+            topic_similarities[sent_idx, topic_id] <- similarity
+        }
+    }
+    
+    chunk_topic_similarities[[chunk_id]] <- list(
+        similarities = topic_similarities,
+        sentences = chunk_data$sentences
+    )
+}
+
+cat("Similarity calculations complete\n")
+
+
+# ==============================================================================
+# SECTION 13: Identify Top Topics for Target Text
+# ==============================================================================
+
+cat("\n--- Identifying Top Topics ---\n")
+
+# Calculate average similarity for each topic across all chunks
+topic_avg_similarities <- numeric(SELECTED_K)
+
+for (topic_id in 1:SELECTED_K) {
+    all_sims <- c()
+    
+    for (chunk_data in chunk_topic_similarities) {
+        if (!is.null(chunk_data$similarities)) {
+            topic_sims <- chunk_data$similarities[, topic_id]
+            topic_sims <- topic_sims[!is.na(topic_sims)]
+            all_sims <- c(all_sims, topic_sims)
+        }
+    }
+    
+    topic_avg_similarities[topic_id] <- mean(all_sims, na.rm = TRUE)
+}
+
+# Get top topics
+top_topic_indices <- order(topic_avg_similarities, decreasing = TRUE)[1:NUM_TOP_TOPICS_DOC]
+top_topic_names <- topics_df$LLM_Name[top_topic_indices]
+
+cat("\nTop Topics for", READ_TEXT_SHORT_NAME, ":\n")
+for (i in 1:NUM_TOP_TOPICS_DOC) {
+    topic_idx <- top_topic_indices[i]
+    cat(sprintf("%d. Topic %d: %s (Avg Similarity: %.3f)\n",
+                i, topic_idx, topics_df$LLM_Name[topic_idx],
+                topic_avg_similarities[topic_idx]))
+}
+
+
+# ==============================================================================
+# SECTION 14: Extract Representative Passages
+# ==============================================================================
+
+cat("\n--- Extracting Representative Passages ---\n")
+
+# For each top topic, find sentences with highest similarity
+
+for (i in 1:NUM_TOP_TOPICS_DOC) {
+    topic_id <- top_topic_indices[i]
+    topic_name <- topics_df$LLM_Name[topic_id]
+    
+    cat(sprintf("\n=== Topic %d: %s ===\n", topic_id, topic_name))
+    
+    # Collect all sentences and their similarities for this topic
+    all_sentences_data <- data.frame(
+        chunk_id = character(),
+        sent_idx = integer(),
+        sentence = character(),
+        similarity = numeric(),
+        stringsAsFactors = FALSE
+    )
+    
+    for (chunk_id in names(chunk_topic_similarities)) {
+        chunk_data <- chunk_topic_similarities[[chunk_id]]
+        if (is.null(chunk_data$similarities)) next
+        
+        topic_sims <- chunk_data$similarities[, topic_id]
+        valid_indices <- which(!is.na(topic_sims) & 
+                              topic_sims >= MIN_SENTENCE_SIMILARITY)
+        
+        if (length(valid_indices) > 0) {
+            for (idx in valid_indices) {
+                all_sentences_data <- rbind(all_sentences_data,
+                    data.frame(
+                        chunk_id = chunk_id,
+                        sent_idx = idx,
+                        sentence = chunk_data$sentences[idx],
+                        similarity = topic_sims[idx],
+                        stringsAsFactors = FALSE
+                    ))
+            }
+        }
+    }
+    
+    # Sort by similarity and get top sentences
+    if (nrow(all_sentences_data) > 0) {
+        all_sentences_data <- all_sentences_data[order(all_sentences_data$similarity, 
+                                                       decreasing = TRUE), ]
+        
+        # Display top matching passages
+        n_to_show <- min(NUM_SENTENCES_TO_SHOW, nrow(all_sentences_data))
+        
+        for (j in 1:n_to_show) {
+            cat(sprintf("\nPassage %d (Similarity: %.3f):\n", j, 
+                       all_sentences_data$similarity[j]))
+            cat(sprintf("  \"%s\"\n", all_sentences_data$sentence[j]))
+        }
+    } else {
+        cat("  No passages found above similarity threshold\n")
+    }
+}
+
+
+# ==============================================================================
+# SECTION 15: Identify Convergence Hotspots
+# ==============================================================================
+
+cat("\n\n=== Hotspot Analysis ===\n")
+
+# Create similarity profile matrix (chunks x topics)
+chunk_similarity_profile_matrix <- matrix(NA,
+    nrow = length(target_chunk_ids),
+    ncol = NUM_TOP_TOPICS_DOC)
+
+colnames(chunk_similarity_profile_matrix) <- paste0("Topic_", top_topic_indices)
+rownames(chunk_similarity_profile_matrix) <- target_chunk_ids
+
+# Calculate mean similarity for each chunk-topic pair
+for (chunk_idx in seq_along(target_chunk_ids)) {
+    chunk_id <- target_chunk_ids[chunk_idx]
+    
+    if (!chunk_id %in% names(chunk_topic_similarities)) next
+    
+    chunk_data <- chunk_topic_similarities[[chunk_id]]
+    if (is.null(chunk_data$similarities)) next
+    
+    for (i in 1:NUM_TOP_TOPICS_DOC) {
+        topic_id <- top_topic_indices[i]
+        topic_sims <- chunk_data$similarities[, topic_id]
+        chunk_similarity_profile_matrix[chunk_idx, i] <- mean(topic_sims, na.rm = TRUE)
+    }
+}
+
+# Calculate percentile thresholds for each topic
+topic_percentile_thresholds <- apply(chunk_similarity_profile_matrix, 2, 
+    function(topic_scores) {
+        quantile(topic_scores, probs = SPIKE_PERCENTILE, na.rm = TRUE)
+    })
+
+# Identify spikes (chunks where similarity exceeds threshold)
+is_spike_matrix <- matrix(FALSE, 
+    nrow = nrow(chunk_similarity_profile_matrix),
+    ncol = ncol(chunk_similarity_profile_matrix))
+
+for (j in 1:ncol(chunk_similarity_profile_matrix)) {
+    threshold <- topic_percentile_thresholds[j]
+    is_spike_matrix[, j] <- chunk_similarity_profile_matrix[, j] >= threshold
+}
+
+# Find convergence hotspots (multiple topics spiking simultaneously)
+spike_counts_per_chunk <- rowSums(is_spike_matrix)
+hotspot_chunk_indices <- which(spike_counts_per_chunk >= CONVERGENCE_MIN_TOPICS)
+
+cat(paste("Found", length(hotspot_chunk_indices), 
+          "convergence hotspots (", CONVERGENCE_MIN_TOPICS, 
+          "+ topics spiking)\n"))
+
+# Display hotspot passages
+if (length(hotspot_chunk_indices) > 0) {
+    cat("\n--- Convergence Hotspot Passages ---\n")
+    
+    for (h_idx in hotspot_chunk_indices) {
+        chunk_id <- target_chunk_ids[h_idx]
+        cat(sprintf("\nHotspot in %s (Chunk %d):\n", chunk_id, h_idx))
+        cat(sprintf("  %d topics spiking simultaneously\n", 
+                   spike_counts_per_chunk[h_idx]))
+        
+        # Show which topics are spiking
+        spiking_topics <- which(is_spike_matrix[h_idx, ])
+        for (topic_col in spiking_topics) {
+            topic_id <- top_topic_indices[topic_col]
+            topic_name <- topics_df$LLM_Name[topic_id]
+            similarity <- chunk_similarity_profile_matrix[h_idx, topic_col]
+            cat(sprintf("    - Topic %d: %s (Sim: %.3f)\n", 
+                       topic_id, topic_name, similarity))
+        }
+        
+        # Display chunk text if available
+        if (chunk_id %in% names(chunk_topic_similarities)) {
+            chunk_data <- chunk_topic_similarities[[chunk_id]]
+            cat("\n  Passage text:\n")
+            cat(paste("    ", paste(chunk_data$sentences, collapse = " "), "\n"))
+        }
+    }
+}
+
+
+# ==============================================================================
+# SECTION 16: Visualize Smoothed Topic Profiles
+# ==============================================================================
+
+cat("\n--- Generating Visualization ---\n")
+
+# Prepare data for plotting
+plot_data_long <- data.frame()
+
+for (i in 1:NUM_TOP_TOPICS_DOC) {
+    topic_id <- top_topic_indices[i]
+    topic_name <- topics_df$LLM_Name[topic_id]
+    
+    similarities <- chunk_similarity_profile_matrix[, i]
+    
+    temp_df <- data.frame(
+        ChunkNum = 1:length(similarities),
+        TopicName = topic_name,
+        MeanSimilarity = similarities
+    )
+    
+    plot_data_long <- rbind(plot_data_long, temp_df)
+}
+
+# Create smoothed plot using LOESS
+smoothed_plot <- ggplot(plot_data_long, 
+                        aes(x = ChunkNum, y = MeanSimilarity, color = TopicName)) +
+    geom_smooth(method = "loess", span = 0.25, se = FALSE, linewidth = 0.8) +
+    labs(title = paste("Smoothed Semantic Similarity Profile:", READ_TEXT_SHORT_NAME),
+         subtitle = "Top Community Topics Across Text Chunks",
+         x = "Chunk Sequence Number",
+         y = "Smoothed Mean Similarity",
+         color = "Topic") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5),
+          legend.position = "bottom") +
+    scale_color_viridis_d(option = "D")
+
+print(smoothed_plot)
+
+cat("\n--- Analysis Complete ---\n")
