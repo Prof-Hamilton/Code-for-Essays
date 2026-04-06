@@ -1,0 +1,1319 @@
+# ==============================================================================
+# Reconfiguring the Ideal Order: Code Repository
+# ==============================================================================
+#
+# This repository contains the computational code for:
+#
+# Hamilton, G. & Sorensen, E.P. (2026). "Reconfiguring the ideal order:
+# ablation and field formation in the twentieth-century Nigerian novel in
+# English." Digital Humanities Quarterly, 20(1).
+# https://dhq.digitalhumanities.org/vol/20/1/000858/000858.html
+#
+# Overview
+# --------
+# This code implements a computational methodology for measuring each text's
+# structural contribution to the semantic field of a literary corpus. The
+# "disruption score" framework treats a corpus as an integrated semantic space
+# constructed through GloVe word embeddings, then employs ablation testing to
+# assess how that space changes when individual texts are removed. Procrustes
+# analysis quantifies the geometric difference between full and ablated
+# embeddings, and an iterative protocol with consistency-based exponential
+# decay filtering distinguishes genuine semantic disruption from algorithmic
+# noise.
+#
+# Sections
+# --------
+#  1.  Setup and Configuration
+#  2.  Load Required Libraries
+#  3.  Build Corpus
+#  4.  Tokenization and Per-Text Word Embeddings
+#  5.  Full Corpus Word Embedding
+#  6.  Cosine Similarity Adjacency Matrix
+#  7.  Recast Cosine Similarity Networks (n-1)
+#  8.  Procrustes Distance Between Full and Recast Networks
+#  9.  Ablation Testing and Procrustes Analysis (n-1 Embeddings)
+#  10. Cosine Similarity Network
+#  11. Network Edge Analysis
+#  12. Sum Weight of Out-Edges
+#  13. Final Analysis — Disruption Scores, Tables 1 & 2, and Network
+#  14. Network Analysis — Eigenvector Centrality and Influence
+#  15. Weight Optimization
+#  16. Diagnostic Plots — Metric Relationships
+#  17. Validation — Text Length vs. Disruption Score
+#
+# Key Functions:
+#   find_shared_words()                 - Identifies anchor vocabulary shared
+#                                         across all texts in the corpus
+#   check_token_sequence_sequentially() - Locates each text's token sequence
+#                                         within the full corpus token stream
+#   remove_token_sequence()             - Removes a text's tokens to produce
+#                                         the ablated corpus
+#   calculate_recast_similarities()     - Computes n-1 cosine similarity
+#                                         networks for each text
+#   find_best_weights()                 - Optimises composite scoring weights
+#                                         across disruption, eigenvector
+#                                         centrality, and network intersection
+#
+# Requirements
+# ------------
+# R Version:
+#   Code was developed using R version 4.2.2 ("Innocent and Trusting").
+#   May require adjustments for other R versions.
+#
+# Required R Packages:
+#   quanteda            Text analysis and corpus management
+#   readtext            Reading text files into R
+#   text2vec            GloVe word embedding training
+#   vegan               Procrustes analysis
+#   igraph              Network construction and analysis
+#   ggraph              Network visualization
+#   dplyr               Data manipulation
+#   visNetwork          Interactive network visualization
+#   ggplot2             Plotting
+#   scales              Value rescaling
+#   gridExtra           Multi-panel plot layout
+#   quanteda.textstats  Cosine similarity calculation
+#
+# Optional (for 3D UMAP word vector visualization, Section 5):
+#   uwot                UMAP dimensionality reduction
+#   rgl                 3D plotting
+#   viridis             Color palettes
+#   ImageMagick         GIF conversion (external dependency)
+#
+# Corpus Size Advisory:
+#   This pipeline is designed for corpora of 20 or more texts. With fewer
+#   texts, some steps (cosine similarity networks, weight optimization,
+#   eigenvector centrality) may produce sparse matrices or constant vectors
+#   that cause warnings or errors. Results are also unlikely to be meaningful
+#   at very small scales. Although a corpus of 20+ texts is the recommended 
+#   minimum, the methodology is most reliable and interpretable at 100+ texts.
+#
+# Data Requirements
+# -----------------
+# - A working directory containing one .txt file per text in the corpus
+# - A Metadata.csv file with the following columns:
+#     corpus_id, short_name, author, title, year, decade, nation, sex,
+#     translated, language, genre, coll_title, coll_editor, coll_pub_date,
+#     series
+#
+# Usage
+# -----
+# 1. Place all corpus .txt files and metadata.csv in your working directory.
+# 2. Set the working directory path in Section 1.
+# 3. In Section 7, set start_pos and end_pos to control which texts are
+#    processed in a given run. Processing the full corpus in batches of
+#    approximately 5 texts is recommended to manage memory and heat.
+#    Example: calculate_recast_similarities(dfm_aka, start_pos = 1, end_pos = 5)
+# 4. Run the script sequentially from Section 1 through Section 17.
+#
+# Output
+# ------
+# The pipeline produces the following outputs:
+# - result_dfr:     Data frame of disruption scores for all texts
+# - adj_matrix:     Cosine similarity adjacency matrix
+# - Recast similarity matrices saved as CSV files (one per text)
+# - Table 1:        Top 25 texts by disruption score (Section 13)
+# - Table 2:        Bottom 10 texts by disruption score (Section 13)
+# - Interactive visNetwork visualization of the disruption-scored network
+# - Figure 1:       Text length vs. disruption score scatter plot (Section 17)
+# - Figure 2:       Disruption scores by text length quartile (Section 17)
+# - length_disruption_analysis.csv: Merged data frame for validation analysis
+#
+# Citation
+# --------
+# If you use this code in your research, please cite:
+#
+# @article{hamilton2026idealorder,
+#   title   = {Reconfiguring the ideal order: ablation and field formation
+#              in the twentieth-century {Nigerian} novel in {English}},
+#   author  = {Hamilton, Grant and Sorensen, Eli Park},
+#   journal = {Digital Humanities Quarterly},
+#   year    = {2026},
+#   volume  = {20},
+#   number  = {1},
+#   online  = {https://dhq.digitalhumanities.org/vol/20/1/000858/000858.html} 
+# }
+#
+# License
+# -------
+# This code is provided under the Creative Commons Attribution License
+# (CC BY 4.0), matching the license of the published article. You are free
+# to use, adapt, and distribute this code for any purpose, provided you
+# give appropriate credit.
+#
+# Contact
+# -------
+# For questions or issues, please contact:
+#   Grant Hamilton: hamilton@cuhk.edu.hk
+#   Department of English, Chinese University of Hong Kong
+#
+# Acknowledgments
+# ---------------
+# This research was conducted as part of "The African Literary Archive —
+# A Computational Analysis of Literary Influence" (2023–25), funded by
+# Hong Kong's University Grants Committee (UGC) through the General
+# Research Fund (project code: 14614522).
+#
+# Notes
+# -----
+# - The code prioritizes clarity and reproducibility over computational
+#   efficiency.
+# - Section 7 (recast similarity networks) is the most computationally
+#   intensive step and is designed to be run in batches.
+# - Section 9 (ablation testing) trains 5 independent GloVe embeddings per
+#   text. For a corpus of 142 texts this amounts to 710 embedding training
+#   runs; plan accordingly.
+# - All random seeds are set explicitly to ensure reproducibility.
+#
+# Version History
+# ---------------
+# Version 1.0 (April 2026): Initial public release accompanying journal
+#                            publication.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+setwd("...")   # Set your working directory
+
+
+# ==============================================================================
+# SECTION 2: Load Required Libraries
+# ==============================================================================
+
+library(quanteda)
+library(readtext)
+library(text2vec)
+library(vegan)
+library(igraph)
+library(ggraph)
+library(dplyr)
+library(visNetwork)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(quanteda.textstats)
+
+
+# ==============================================================================
+# SECTION 3: Build Corpus
+# ==============================================================================
+
+# Load raw text files from working directory
+litcorpus <- texts(readtext("*.txt", encoding = "UTF-8"))
+
+# Create corpus
+corpus <- corpus(litcorpus)
+
+# Load metadata
+metadata <- read.csv("Metadata.csv", header = TRUE)
+
+# Extract metadata fields
+corpus_id           <- metadata$corpus_id
+short_name          <- metadata$short_name
+author              <- metadata$author
+title               <- metadata$title
+year                <- metadata$year
+decade              <- metadata$decade
+nation              <- metadata$nation
+sex                 <- metadata$sex
+translated          <- metadata$translated
+language            <- metadata$language
+genre               <- metadata$genre
+collection_title    <- metadata$coll_title
+collection_editor   <- metadata$coll_editor
+collection_pub_date <- metadata$coll_pub_date
+series              <- metadata$series
+
+# Add metadata to corpus
+docvars(corpus, "corpus_id")           <- paste(corpus_id)
+docvars(corpus, "short_name")          <- paste(short_name)
+docvars(corpus, "author")              <- paste(author)
+docvars(corpus, "title")               <- paste(title)
+docvars(corpus, "year")                <- paste(year)
+docvars(corpus, "decade")              <- paste(decade)
+docvars(corpus, "nation")              <- paste(nation)
+docvars(corpus, "sex")                 <- paste(sex)
+docvars(corpus, "translated")          <- paste(translated)
+docvars(corpus, "language")            <- paste(language)
+docvars(corpus, "genre")               <- paste(genre)
+docvars(corpus, "collection_title")    <- paste(collection_title)
+docvars(corpus, "collection_editor")   <- paste(collection_editor)
+docvars(corpus, "collection_pub_date") <- paste(collection_pub_date)
+docvars(corpus, "series")              <- paste(series)
+
+# Remove ".txt" file extension from document names
+title <- docnames(corpus)
+docnames(corpus) <- paste(tools::file_path_sans_ext(title))
+
+# Subset corpus by year, genre, and nation
+corpus_sub     <- corpus_subset(corpus, year >= 1900 & genre %in% c("novel"))
+corpus_sub_sub <- corpus_subset(corpus_sub, nation == "Nigeria")
+
+ndoc_corp <- ndoc(corpus)
+ndoc_sub  <- ndoc(corpus_sub)
+ndoc_ss   <- ndoc(corpus_sub_sub)
+
+print(paste("Docs in Full Corpus:", ndoc_corp))
+print(paste("Docs in Subset Corpus:", ndoc_sub))
+print(paste("Docs in Nation Corpus:", ndoc_ss))
+
+
+# ==============================================================================
+# SECTION 4: Tokenization and Per-Text Word Embeddings
+# ==============================================================================
+#
+# For each text in the corpus subset, this section:
+# 1. Tokenizes and cleans the text
+# 2. Constructs a feature co-occurrence matrix (FCM)
+# 3. Trains a GloVe word embedding model
+# Word vectors and token lists are stored as named objects in the environment.
+
+start_time <- Sys.time()
+counter    <- 0
+
+for (i in 1:ndoc(corpus_sub_sub)) {
+    counter <- counter + 1
+    print(paste0("Tokenizing... ", counter, " of ", ndoc_ss))
+
+    # Define anchor words to preserve during stopword removal
+    base_anchor <- c("the", "and", "of", "in", "to", "is", "was",
+                     "said", "had", "he", "she", "they")
+
+    # Replace hyphens and separate compound words
+    tnh <- gsub("-", " ", corpus_sub_sub[i])
+
+    # Tokenize and clean
+    a.t_c <- quanteda::tokens(tnh,
+                              remove_punct   = TRUE,
+                              remove_symbols = TRUE,
+                              remove_numbers = TRUE)
+    a.t_c_lo <- tokens_tolower(a.t_c)
+
+    # Build modified stopword list (preserving anchor words)
+    english_stops  <- stopwords("english")
+    english_stops  <- english_stops[!english_stops %in% base_anchor]
+    stoplist_legacy <- c(letters, LETTERS)
+
+    # Remove stopwords
+    gat_rm <- tokens_remove(a.t_c_lo, c(english_stops, stoplist_legacy))
+
+    # Convert to format needed for FCM
+    gat_list   <- as.list(gat_rm)
+    gat_mo     <- paste(unlist(gat_list), collapse = " ")
+    gat_mo_tox <- quanteda::tokens(gat_mo)
+
+    # Store tokenized text
+    a.nam <- paste0(corpus_sub_sub$short_name[i], "_tokslist")
+    assign(a.nam, gat_mo_tox)
+
+    # Create FCM with distance-weighted context window
+    print(paste0("Creating word vectors..."))
+    b.fcmat <- fcm(gat_mo_tox, context = "window", count = "weighted",
+                   weights = 1 / (1:5), tri = TRUE)
+
+    # Train GloVe word embedding model
+    set.seed(42)
+    glove          <- GlobalVectors$new(rank = 50, x_max = 10)
+    b.wv_main      <- glove$fit_transform(b.fcmat, n_iter = 15,
+                                          convergence_tol = 0.01, n_threads = 8)
+    b.wv_context   <- glove$components
+    b.word_vectors <- b.wv_main + t(b.wv_context)
+
+    # Store word vectors
+    b.nam <- paste0(corpus_sub_sub$short_name[i], "_vex")
+    assign(b.nam, b.word_vectors)
+
+    print(paste0("Completed text ", i))
+}
+
+end_time  <- Sys.time()
+exec_time <- end_time - start_time
+exec_time
+
+# Collect all token lists and word vectors
+pull_tokslist <- mget(ls(.GlobalEnv, pattern = "_tokslist"), envir = .GlobalEnv)
+pull_vectors  <- mget(ls(.GlobalEnv, pattern = "_vex"),      envir = .GlobalEnv)
+
+
+# ==============================================================================
+# SECTION 5: Full Corpus Word Embedding
+# ==============================================================================
+#
+# Concatenates all tokenized texts into a single corpus-level token sequence,
+# then trains a GloVe word embedding on the full corpus.
+
+# Join all token lists into a single sequence
+c.a <- as.character()
+for (i in 1:length(pull_tokslist)) {
+    c.b <- pull_tokslist[[i]]
+    c.c <- as.list(c.b)
+    c.d <- paste(unlist(c.c), collapse = " ")
+    c.a <- paste(c.a, c.d, sep = " ")
+}
+
+full_join <- quanteda::tokens(c.a)
+fu_to     <- tokens_remove(full_join, stoplist_legacy)
+full_toks <- tokens_remove(fu_to)
+
+# Build full corpus FCM
+a.fcmat <- fcm(full_toks, context = "window", count = "weighted",
+               weights = 1 / (1:5), tri = TRUE)
+
+# Train full corpus GloVe embedding
+set.seed(42)
+glove          <- GlobalVectors$new(rank = 50, x_max = 10)
+a.wv_main      <- glove$fit_transform(a.fcmat, n_iter = 15,
+                                      convergence_tol = 0.01, n_threads = 8)
+a.wv_context   <- glove$components
+a.word_vectors <- a.wv_main + t(a.wv_context)
+
+
+# ==============================================================================
+# OPTIONAL: 3D UMAP Visualization of Word Vectors
+# ==============================================================================
+#
+# The following code generates a rotating 3D animation of the full corpus
+# word vectors, coloured by distance from centroid. It requires the uwot
+# and rgl packages and ImageMagick for GIF conversion. Uncomment to run.
+
+# library(uwot)
+# word2vec_umap <- umap(a.word_vectors, n_components = 3, metric = "cosine",
+#                       n_neighbors = 100, min_dist = 0, spread = 1)
+# df_word2vec_umap <- as.data.frame(word2vec_umap, stringsAsFactors = FALSE)
+# df_word2vec_umap$word <- rownames(a.word_vectors)
+# colnames(df_word2vec_umap) <- c("UMAP1", "UMAP2", "UMAP3", "word")
+# centroid <- colMeans(word2vec_umap)
+# distances <- sqrt(rowSums((word2vec_umap - matrix(centroid,
+#                  nrow = nrow(word2vec_umap), ncol = 3, byrow = TRUE))^2))
+# distances_normalized <- (distances - min(distances)) /
+#                         (max(distances) - min(distances))
+# library(viridis)
+# colors <- viridis(100)[cut(distances_normalized, breaks = 100)]
+# library(rgl)
+# open3d()
+# plot3d(df_word2vec_umap$UMAP1, df_word2vec_umap$UMAP2, df_word2vec_umap$UMAP3,
+#        col = colors, size = 0.2, type = "s", xlab = "", ylab = "", zlab = "")
+# clear3d(type = "bboxdeco")
+# par3d(windowRect = c(10, 10, 810, 810), zoom = 0.6)
+# movie3d(spin3d(axis = c(0, 0, 1), rpm = 5), duration = 12, type = "gif",
+#         fps = 20, movie = "3D_ani_centroid_dist", dir = getwd(), convert = TRUE)
+
+
+# ==============================================================================
+# SECTION 6: Cosine Similarity Adjacency Matrix
+# ==============================================================================
+#
+# Builds an adjacency matrix recording cosine similarity between all text
+# pairs. Similarities are calculated only where texts are by different authors
+# and the "source" text precedes the "target" text in publication date.
+
+dv_css  <- docvars(corpus_sub_sub)
+
+df_list <- list()
+for (i in 1:length(pull_tokslist)) {
+    first_ts  <- pull_tokslist[[i]]
+    tocks     <- tokens_remove(first_ts, stoplist_legacy)
+    toks_vec  <- unlist(tocks)
+    dt.f      <- data.frame(tokens = toks_vec, stringsAsFactors = FALSE)
+    dt.f$short_name <- gsub("_tokslist", "", names(pull_tokslist)[i])
+    df_list[[i]] <- dt.f
+}
+
+# Bind dataframes and merge with metadata
+dt.f_tokens <- do.call(rbind, df_list)
+df_joined   <- merge(dt.f_tokens, dv_css, by = "short_name")
+
+# Group tokens by document
+df_gr <- df_joined %>%
+    group_by(corpus_id, author, title, year, decade, nation, sex,
+             translated, language, genre, collection_title,
+             collection_editor, collection_pub_date, short_name) %>%
+    summarize(text = paste(tokens, collapse = " "), .groups = "drop") %>%
+    arrange(short_name)
+
+# Build document-feature matrix
+dfm_aka <- dfm(tokens(df_gr$text))
+docnames(dfm_aka) <- df_gr$title
+
+# Add metadata to DFM
+docvars(dfm_aka, "corpus_id")           <- df_gr$corpus_id
+docvars(dfm_aka, "author")              <- df_gr$author
+docvars(dfm_aka, "title")               <- df_gr$title
+docvars(dfm_aka, "year")                <- as.numeric(df_gr$year)
+docvars(dfm_aka, "decade")              <- as.numeric(df_gr$decade)
+docvars(dfm_aka, "nation")              <- df_gr$nation
+docvars(dfm_aka, "sex")                 <- df_gr$sex
+docvars(dfm_aka, "translated")          <- df_gr$translated
+docvars(dfm_aka, "language")            <- df_gr$language
+docvars(dfm_aka, "genre")               <- df_gr$genre
+docvars(dfm_aka, "collection_title")    <- df_gr$collection_title
+docvars(dfm_aka, "collection_editor")   <- df_gr$collection_editor
+docvars(dfm_aka, "collection_pub_date") <- df_gr$collection_pub_date
+docvars(dfm_aka, "short_name")          <- df_gr$short_name
+
+# Initialise adjacency matrix
+adj_matrix <- diag(1, nrow = ndoc(dfm_aka), ncol = ndoc(dfm_aka))
+rownames(adj_matrix) <- colnames(adj_matrix) <- docnames(dfm_aka)
+
+# Calculate pairwise cosine similarities (different authors, earlier to later)
+start_time <- Sys.time()
+
+for (i in 1:ndoc(dfm_aka)) {
+    for (j in 1:ndoc(dfm_aka)) {
+        if (i != j &&
+            docvars(dfm_aka, "author")[i] != docvars(dfm_aka, "author")[j] &&
+            docvars(dfm_aka, "year")[i] < docvars(dfm_aka, "year")[j]) {
+
+            print(paste("row:", i, "column:", j, "of:", ndoc(dfm_aka), "rows"))
+            sim_matrix <- as.numeric(textstat_simil(dfm_aka[i, ], dfm_aka[j, ],
+                                                    method  = "cosine",
+                                                    margin  = "documents"))
+            if (length(sim_matrix) == 0) {
+                print("sim_matrix does not have enough rows or columns")
+            } else {
+                adj_matrix[i, j] <- sim_matrix
+            }
+        }
+    }
+}
+
+end_time  <- Sys.time()
+exec_time <- end_time - start_time
+exec_time
+
+# Optionally save the adjacency matrix to file
+# write.csv(adj_matrix, "Literary_Influence_adj_mat.csv")
+
+
+# ==============================================================================
+# SECTION 7: Recast Cosine Similarity Networks (n-1)
+# ==============================================================================
+#
+# For each text, calculates an adjacency matrix for the corpus minus that
+# text, saving results to CSV files and to the global environment.
+# Note: This procedure is computationally intensive. The function prompts for
+# a range of texts to process in a single run to manage heat and memory.
+
+calculate_recast_similarities <- function(dfm_aka, start_pos, end_pos) {
+
+    total_texts <- ndoc(dfm_aka)
+    if (is.na(start_pos) || is.na(end_pos) ||
+        start_pos < 1 || end_pos > total_texts ||
+        start_pos > end_pos) {
+        stop(paste("Please enter valid positions between 1 and", total_texts))
+    }
+
+    library(quanteda)
+    library(quanteda.textstats)
+    library(igraph)
+    library(Matrix)
+
+    print(paste("Processing texts", start_pos, "to", end_pos,
+                "of", total_texts, "total texts"))
+
+    start_time <- Sys.time()
+
+    for (i in start_pos:end_pos) {
+        current_shortname <- docvars(dfm_aka[i, ], "short_name")
+        print(paste("Processing recast", i, "of", total_texts, "-", current_shortname))
+
+        reduced_dfm <- dfm_aka[-i, ]
+
+        reduced_adj_matrix <- matrix(0,
+                                     nrow = ndoc(reduced_dfm),
+                                     ncol = ndoc(reduced_dfm))
+        rownames(reduced_adj_matrix) <- colnames(reduced_adj_matrix) <- docnames(reduced_dfm)
+
+        doc_authors  <- docvars(reduced_dfm, "author")
+        doc_years    <- docvars(reduced_dfm, "year")
+        current_year <- docvars(dfm_aka[i, ], "year")
+
+        for (j in 1:ndoc(reduced_dfm)) {
+            row_results <- numeric(ndoc(reduced_dfm))
+
+            for (k in 1:ndoc(reduced_dfm)) {
+                if (j != k &&
+                    doc_authors[j] != doc_authors[k] &&
+                    doc_years[k] > current_year) {
+
+                    sim_score <- as.numeric(textstat_simil(reduced_dfm[j, ],
+                                                           reduced_dfm[k, ],
+                                                           method = "cosine",
+                                                           margin = "documents"))
+                    row_results[k] <- sim_score
+                }
+            }
+            reduced_adj_matrix[j, ] <- row_results
+        }
+
+        filename <- paste0("recast_matrix_", current_shortname, ".csv")
+        write.csv(reduced_adj_matrix, filename)
+        print(paste("Saved matrix for", current_shortname, "to", filename))
+
+        assign(paste0(current_shortname, "_rcm"), reduced_adj_matrix, envir = .GlobalEnv)
+
+        if (i < end_pos) {
+            print("Pausing before processing next batch...")
+            Sys.sleep(30)
+        }
+    }
+
+    end_time  <- Sys.time()
+    exec_time <- end_time - start_time
+    print(paste("Analysis complete. Total execution time:",
+                round(exec_time, 2), "minutes"))
+}
+
+# Run the function: set start_pos and end_pos to the range of texts to process.
+# Processing the full corpus in one run is intensive; running in batches of ~5
+# is recommended to manage memory and heat.
+# Example: calculate_recast_similarities(dfm_aka, start_pos = 1, end_pos = 5)
+calculate_recast_similarities(dfm_aka, start_pos = 1, end_pos = ndoc(dfm_aka))
+
+# Collect all recast matrices
+pull_rcms <- mget(ls(.GlobalEnv, pattern = "_rcm"), envir = .GlobalEnv)
+
+
+# ==============================================================================
+# SECTION 8: Procrustes Distance Between Full and Recast Networks
+# ==============================================================================
+#
+# Uses the protest() function from the vegan package to calculate the
+# difference between each recast adjacency matrix and the corresponding
+# subset of the full adjacency matrix.
+
+library(vegan)
+
+n_rcms      <- length(pull_rcms)
+differences <- rep(NA_real_, n_rcms)
+p_values    <- rep(NA_real_, n_rcms)
+
+for (i in 1:n_rcms) {
+    rcm      <- pull_rcms[[i]]
+    full_sub <- adj_matrix[-i, -i]
+
+    # Skip if either matrix has too few non-zero values for a meaningful comparison
+    if (sum(rcm != 0) < 2 || sum(full_sub != 0) < 2) {
+        warning(paste("Skipping text", i,
+                      "— insufficient non-zero values for Procrustes comparison"))
+        next
+    }
+
+    tryCatch({
+        prc            <- protest(rcm, full_sub, permutations = 999)
+        differences[i] <- prc$ss
+        p_values[i]    <- prc$signif
+    }, error = function(e) {
+        warning(paste("Error processing text", i, ":", e$message))
+    })
+}
+
+text_names <- rownames(adj_matrix)[1:n_rcms]
+ress <- data.frame(
+    text       = text_names,
+    difference = differences,
+    p_value    = p_values
+)
+
+# Sort by difference to identify most influential texts (NAs placed last)
+ress <- ress[order(-ress$difference, na.last = TRUE), ]
+ress
+
+
+# ==============================================================================
+# SECTION 9: Ablation Testing and Procrustes Analysis (n-1 Embeddings)
+# ==============================================================================
+#
+# Identifies anchor words shared across all texts, then for each text:
+# 1. Removes that text's tokens from the full corpus token sequence
+# 2. Retrains a GloVe embedding on the reduced corpus (5 iterations)
+# 3. Aligns the full and reduced embeddings using Procrustes analysis
+# 4. Applies an exponential decay function to penalise high stochastic variance
+# Results are stored in result_dfr.
+
+library(quanteda)
+library(text2vec)
+library(vegan)
+
+# -----------------------------------------------------------------------------
+# Find words shared across every text in the corpus
+# -----------------------------------------------------------------------------
+
+find_shared_words <- function(pull_tokslist) {
+    shared_words <- attr(pull_tokslist[[1]], "types")
+    for (i in 2:length(pull_tokslist)) {
+        current_words <- attr(pull_tokslist[[i]], "types")
+        shared_words  <- intersect(shared_words, current_words)
+    }
+    return(shared_words)
+}
+
+anchor_words <- find_shared_words(pull_tokslist)
+print(paste0("Number of anchor words to align word embeddings: ", length(anchor_words)))
+
+# -----------------------------------------------------------------------------
+# Helper functions
+# -----------------------------------------------------------------------------
+
+# Preprocess a text sequence
+preprocess_sequence <- function(sequence, anchor_words) {
+    sequence_no_hyphen <- gsub("-", " ", sequence)
+    tokens_seq    <- quanteda::tokens(sequence_no_hyphen,
+                                      remove_punct   = TRUE,
+                                      remove_symbols = TRUE,
+                                      remove_numbers = TRUE)
+    tokens_seq_lo <- tokens_tolower(tokens_seq)
+    return(tokens_seq_lo)
+}
+
+# Locate the start and end indices of each text's token sequence within full_toks
+check_token_sequence_sequentially <- function(full_toks, text_toks_list,
+                                              seq_length        = 15,
+                                              preprocess_length = 25) {
+    tokens_vec    <- as.list(full_toks)[[1]]
+    start_indices <- c()
+    end_indices   <- c()
+
+    for (text_toks in text_toks_list) {
+        actual_length <- length(text_toks[[1]])
+        print(paste("Processing sequence of length:", actual_length))
+
+        start_seq <- as.list(text_toks)[[1]][1:min(preprocess_length, actual_length)]
+        end_seq   <- as.list(text_toks)[[1]][max(1, actual_length - preprocess_length + 1):actual_length]
+
+        start_seq_text <- paste(start_seq, collapse = " ")
+        end_seq_text   <- paste(end_seq,   collapse = " ")
+
+        start_seq_processed <- preprocess_sequence(start_seq_text, anchor_words)
+        end_seq_processed   <- preprocess_sequence(end_seq_text,   anchor_words)
+
+        start_seq_final <- as.list(start_seq_processed)[[1]][
+            1:min(seq_length, length(start_seq_processed[[1]]))]
+        end_seq_final <- as.list(end_seq_processed)[[1]][
+            max(1, length(end_seq_processed[[1]]) - seq_length + 1):length(end_seq_processed[[1]])]
+
+        print("Looking for sequence...")
+        print(paste0("Start: ", paste(start_seq_final, collapse = " ")))
+        print(paste0("End: ",   paste(end_seq_final,   collapse = " ")))
+
+        start_matches <- which(sapply(1:(length(tokens_vec) - length(start_seq_final) + 1), function(i) {
+            all(tokens_vec[i:(i + length(start_seq_final) - 1)] == start_seq_final)
+        }))
+
+        if (length(start_matches) == 0) stop("Start sequence not found in full_toks")
+        start_index <- start_matches[1]
+
+        search_range_start <- start_index
+        search_range_end   <- min(start_index + actual_length + 100,
+                                  length(tokens_vec) - length(end_seq_final) + 1)
+
+        end_matches <- which(sapply(search_range_start:search_range_end, function(i) {
+            all(tokens_vec[i:(i + length(end_seq_final) - 1)] == end_seq_final)
+        }))
+
+        if (length(end_matches) == 0) stop("End sequence not found in full_toks")
+        end_index <- search_range_start + end_matches[length(end_matches)] - 1 +
+                     length(end_seq_final) - 1
+
+        range_length <- end_index - start_index + 1
+        if (range_length > actual_length * 1.2) {
+            warning(paste("Suspicious range length:", range_length,
+                          "for sequence of length:", actual_length))
+            next
+        }
+
+        start_indices <- c(start_indices, start_index)
+        end_indices   <- c(end_indices,   end_index)
+    }
+
+    print(paste("Found sequence range:",
+                paste(start_indices, collapse = ","), "to",
+                paste(end_indices,   collapse = ",")))
+
+    return(list(start_indices = start_indices, end_indices = end_indices))
+}
+
+# Remove a token sequence by index positions
+remove_token_sequence <- function(tokens_vec, start_indices, end_indices) {
+    remove_indices <- unlist(mapply(function(start, end) start:end,
+                                   start_indices, end_indices))
+    tokens_vec <- tokens_vec[-remove_indices]
+    return(tokens_vec)
+}
+
+# -----------------------------------------------------------------------------
+# Main Procrustes loop
+# -----------------------------------------------------------------------------
+
+# Initialise results dataframe
+result_dfr <- data.frame(
+    short_name   = character(),
+    m_dis_val    = numeric(),
+    ran_as_perc  = numeric(),
+    comp_score   = numeric(),
+    comp_w_decay = numeric(),
+    stringsAsFactors = FALSE
+)
+
+start_time <- Sys.time()
+
+for (i in seq_along(pull_tokslist)) {
+    short_name       <- sub("_tokslist$", "", names(pull_tokslist)[i])
+    print(paste0("Processing ", short_name, " (", i, "/", length(pull_tokslist), ")"))
+
+    m.full_toks      <- full_toks
+    current_sequence <- pull_tokslist[[paste0(short_name, "_tokslist")]]
+
+    tryCatch({
+        sequence_check <- check_token_sequence_sequentially(
+            m.full_toks,
+            list(current_sequence),
+            seq_length        = 15,
+            preprocess_length = 25
+        )
+
+        if (length(sequence_check$start_indices) > 0 &&
+            length(sequence_check$end_indices)   > 0) {
+
+            m.full_toks_vec     <- as.list(m.full_toks)[[1]]
+            initial_token_count <- length(m.full_toks_vec)
+
+            m.full_toks_vec <- remove_token_sequence(
+                m.full_toks_vec,
+                sequence_check$start_indices,
+                sequence_check$end_indices
+            )
+
+            m.full_toks       <- tokens(list(m.full_toks_vec))
+            final_token_count <- ntoken(m.full_toks)
+            print(paste("Tokens removed:", initial_token_count - final_token_count))
+
+        } else {
+            print("No tokens removed for this sequence.")
+        }
+
+        print(paste0("Recast corpus token count: ", ntoken(m.full_toks),
+                     " (Full corpus token count: ", ntoken(full_toks), ")"))
+
+        # Build reduced corpus FCM
+        m.a.fcmat <- fcm(m.full_toks, context = "window", count = "weighted",
+                         weights = 1 / (1:5), tri = TRUE)
+
+        print(paste0("Generating modified corpus vectors..."))
+        ssq <- c()
+
+        # Run five Procrustes iterations with different random seeds
+        for (z in 1:5) {
+            print(paste0("Iteration ", z, "/5"))
+            m.glove        <- GlobalVectors$new(rank = 50, x_max = 10)
+            m.a.wv_main    <- m.glove$fit_transform(m.a.fcmat, n_iter = 3,
+                                                    convergence_tol = 0.01,
+                                                    n_threads = 8)
+            m.a.wv_context <- m.glove$components
+            m.a.word_vectors <- m.a.wv_main + t(m.a.wv_context)
+
+            ma_vectors <- scale(m.a.word_vectors[anchor_words, ])
+            a_vectors  <- scale(a.word_vectors[anchor_words, ])
+
+            alignment <- procrustes(ma_vectors, a_vectors)
+            ssq       <- c(ssq, alignment$ss)
+        }
+
+        # Calculate disruption score with exponential decay for variance
+        disruption_value <- round((ssq / 100), 2)
+        m_dis_val        <- mean(disruption_value)
+        ran_dis_val      <- diff(range(disruption_value))
+        ran_as_perc      <- round(((ran_dis_val / m_dis_val) * 100), 2)
+        comp_score       <- m_dis_val * (1 / ran_as_perc)
+        decay_factor     <- 0.01
+        comp_w_decay     <- m_dis_val * exp(-decay_factor * ran_as_perc)
+
+        result_dfr <- rbind(
+            result_dfr,
+            data.frame(short_name, m_dis_val, ran_as_perc,
+                       comp_score, comp_w_decay)
+        )
+
+    }, error = function(e) {
+        warning(paste("Error processing", short_name, ":", e$message))
+    })
+}
+
+end_time  <- Sys.time()
+exec_time <- end_time - start_time
+print(paste("Time taken:", exec_time, "minutes"))
+
+print(result_dfr)
+
+
+# ==============================================================================
+# SECTION 10: Cosine Similarity Network
+# ==============================================================================
+#
+# Constructs the directed cosine similarity graph and applies an edge threshold
+# (mean + 1 SD) to filter weak connections. The resulting g_filtered object
+# is used in Sections 11-14.
+
+library(igraph)
+
+# Create directed graph from adjacency matrix
+g <- graph_from_adjacency_matrix(adj_matrix, mode = "directed",
+                                 weighted = TRUE, diag = FALSE)
+
+# Filter edges above threshold (mean + 1 SD)
+mean_weight <- mean(E(g)$weight)
+sd_weight   <- sd(E(g)$weight)
+threshold   <- mean_weight + sd_weight
+
+edge_ids   <- E(g)[E(g)$weight < threshold]
+g_filtered <- delete_edges(g, edge_ids)
+
+# OPTIONAL: Minimum spanning tree visualization
+# The following lines produce an MST visualization of the filtered network.
+# This section can be skipped without affecting downstream sections.
+# Requires the ggraph package.
+# library(ggraph)
+# mst <- minimum.spanning.tree(g_filtered)
+# mst <- delete.vertices(mst, V(mst)[degree(mst) == 0])
+# set.seed(100)
+# ggraph(mst, layout = "dh") +
+#     geom_edge_link(aes(edge_alpha = weight), show.legend = FALSE) +
+#     geom_node_point(aes(size = degree(mst)), color = "red") +
+#     scale_size_area(max_size = 6) +
+#     theme_void() +
+#     theme(legend.position = "none")
+
+
+# ==============================================================================
+# SECTION 11: Network Edge Analysis
+# ==============================================================================
+
+node_degrees <- degree(g_filtered, mode = "out")
+sorted_nodes <- sort(node_degrees, decreasing = TRUE)
+
+thr.p <- round(100 / length(sorted_nodes) *
+               (length(which(sorted_nodes > 0))), 2)
+print(paste0("Threshold calculated at ", round(threshold, 2)))
+print(paste0("Threshold accounts for ", thr.p, "% of data"))
+
+t.xts  <- names(head(sorted_nodes))
+no.edg <- as.integer(head(sorted_nodes))
+
+pr_inf_txts <- function(t.xts, no.edg) {
+    cat("The most influential texts in the corpus are:\n\n")
+    for (i in 1:length(t.xts)) {
+        cat(paste0(docvars(dfm_aka[t.xts[i], ])$author, ". ",
+                   t.xts[i], " (",
+                   docvars(dfm_aka[t.xts[i], ])$year, ")",
+                   " - ", no.edg[i], " edges\n"))
+    }
+}
+
+pr_inf_txts(t.xts, no.edg)
+
+
+# ==============================================================================
+# SECTION 12: Sum Weight of Out-Edges
+# ==============================================================================
+#
+# Calculates the total weight of out-edges for each node. Edges to texts
+# by the same author and/or texts published before or in the same year as
+# the source text are excluded. No threshold is applied.
+
+wts  <- E(g)$weight   # All out-weights (not g_filtered)
+aus  <- docvars(dfm_aka)$author
+yeas <- docvars(dfm_aka)$year
+
+total_wts <- sapply(V(g), function(node) {
+    incident_edges <- incident(g, node, mode = "out")
+    valid_edges <- incident_edges[
+        !(aus[get.edges(g, incident_edges)[, 2]] == aus[node] |
+          yeas[get.edges(g, incident_edges)[, 2]] <= yeas[node])
+    ]
+    sum(wts[valid_edges])
+})
+
+df.wts        <- data.frame(node = V(g)$name, total_weight = total_wts)
+sorted_df.wts <- df.wts[order(-df.wts$total_weight), ]
+n_top         <- min(6, nrow(sorted_df.wts))
+sat_wts       <- round(sorted_df.wts$total_weight[1:n_top], 3)
+tx.ts         <- head(sorted_df.wts$node, n_top)
+
+p_st_txts <- function(sat_wts) {
+    cat(paste0("The ", length(sat_wts),
+               " most influential texts by sum of 'out' edges are:\n\n"))
+    for (i in seq_along(sat_wts)) {
+        cat(paste0(tx.ts[i], " (",
+                   docvars(dfm_aka[tx.ts[i], ])$year, ")",
+                   " - ", sat_wts[i], "\n"))
+    }
+}
+
+p_st_txts(sat_wts)
+
+
+# ==============================================================================
+# SECTION 13: Final Analysis — Disruption Scores and Network
+# ==============================================================================
+#
+# Aligns disruption scores with igraph node data, applies a significance
+# threshold at the top 10% of scores, and visualises the network using
+# visNetwork with nodes coloured by disruption level.
+
+library(igraph)
+
+mdata   <- docvars(corpus_sub_sub)
+map_df  <- data.frame(short_name = mdata$short_name, title = mdata$title)
+mged_df <- merge(result_dfr, map_df, by = "short_name")
+
+# ------------------------------------------------------------------------------
+# Table 1: Top 25 Texts by Disruption Score
+# ------------------------------------------------------------------------------
+
+mged_sorted    <- mged_df[order(-mged_df$comp_w_decay), ]
+mged_top25     <- head(mged_sorted, 25)
+mged_top25$rank <- 1:nrow(mged_top25)
+
+# Merge in author and year from corpus metadata
+meta_lookup <- docvars(corpus_sub_sub)[, c("short_name", "author", "year")]
+mged_top25  <- merge(mged_top25, meta_lookup, by = "short_name")
+mged_top25  <- mged_top25[order(mged_top25$rank), ]
+
+cat("\nTable 1: Top 25 Texts by Disruption Score\n\n")
+cat(sprintf("%-4s  %-30s  %-45s  %-6s  %-10s\n",
+            "Rank", "Author", "Title", "Year", "Disruption"))
+cat(strrep("-", 100), "\n")
+for (i in 1:nrow(mged_top25)) {
+    cat(sprintf("%-4d  %-30s  %-45s  %-6s  %-10.2f\n",
+                mged_top25$rank[i],
+                mged_top25$author[i],
+                mged_top25$title[i],
+                mged_top25$year[i],
+                mged_top25$comp_w_decay[i]))
+}
+
+# ------------------------------------------------------------------------------
+# Table 2: Bottom 10 Texts by Disruption Score
+# ------------------------------------------------------------------------------
+
+n_texts       <- nrow(mged_sorted)
+mged_bottom10 <- tail(mged_sorted, 10)
+mged_bottom10$rank <- (n_texts - 9):n_texts
+
+mged_bottom10 <- merge(mged_bottom10, meta_lookup, by = "short_name")
+mged_bottom10 <- mged_bottom10[order(mged_bottom10$rank), ]
+
+cat("\nTable 2: Bottom 10 Texts by Disruption Score\n\n")
+cat(sprintf("%-4s  %-30s  %-45s  %-6s  %-10s\n",
+            "Rank", "Author", "Title", "Year", "Disruption"))
+cat(strrep("-", 100), "\n")
+for (i in 1:nrow(mged_bottom10)) {
+    cat(sprintf("%-4d  %-30s  %-45s  %-6s  %-10.2f\n",
+                mged_bottom10$rank[i],
+                mged_bottom10$author[i],
+                mged_bottom10$title[i],
+                mged_bottom10$year[i],
+                mged_bottom10$comp_w_decay[i]))
+}
+
+disruption_values <- setNames(mged_df$comp_w_decay, mged_df$title)
+V(g_filtered)$disruption <- disruption_values[V(g_filtered)$name]
+
+# Remove nodes with zero edges
+gg_filtered <- g_filtered
+gg_filtered <- delete.vertices(gg_filtered, which(degree(gg_filtered) == 0))
+
+nrt <- length(V(g_filtered)) - length(V(gg_filtered))
+print(paste0("Number of texts removed (0 edges): ", nrt))
+
+disruption_scores <- get.vertex.attribute(gg_filtered, "disruption")
+
+# Set significance threshold at top 10% of remaining nodes
+sorted_scores      <- sort(disruption_scores, decreasing = TRUE)
+num_top_10_percent <- ceiling(0.1 * length(sorted_scores))
+thresher           <- sorted_scores[num_top_10_percent]
+print(paste0("Threshold for high disruption nodes: ", thresher))
+
+V(gg_filtered)$color <- ifelse(disruption_scores >= thresher, "red", "blue")
+
+nodes <- data.frame(id = V(gg_filtered)$name, color = V(gg_filtered)$color)
+edges <- get.data.frame(gg_filtered, what = "edges")
+
+num_red_nodes <- sum(V(gg_filtered)$color == "red")
+print(paste0("Number of high disruption nodes: ", num_red_nodes))
+
+# Interactive network visualization
+library(visNetwork)
+
+visNetwork(nodes, edges) %>%
+    visNodes(color = list(background = nodes$color)) %>%
+    visEdges(arrows = "to") %>%
+    visPhysics(stabilization = FALSE,
+               maxVelocity = 30,
+               minVelocity = 10,
+               solver = "forceAtlas2Based",
+               forceAtlas2Based = list(damping = 0.1)) %>%
+    visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>%
+    visInteraction(navigationButtons = TRUE)
+
+
+# ==============================================================================
+# SECTION 14: Network Analysis — Eigenvector Centrality and Influence
+# ==============================================================================
+
+eigenvector_centrality <- evcent(gg_filtered)$vector
+
+centrality_measures <- data.frame(
+    name        = V(gg_filtered)$name,
+    disruption  = V(gg_filtered)$disruption,
+    eigenvector = eigenvector_centrality
+)
+
+no_hd_nodes                <- numeric(length(V(gg_filtered)))
+high_disruption_node_names <- V(gg_filtered)$name[V(gg_filtered)$disruption >= thresher]
+
+# Count high-disruption neighbours for each node
+for (v in V(gg_filtered)) {
+    neighbor_node_names <- V(gg_filtered)$name[neighbors(gg_filtered, v)]
+    no_hd_nodes[v]      <- sum(neighbor_node_names %in% high_disruption_node_names)
+}
+
+no_hd_nodes_df      <- data.frame(name = V(gg_filtered)$name, no_hd_nodes = no_hd_nodes)
+centrality_measures <- merge(centrality_measures, no_hd_nodes_df, by = "name")
+
+library(scales)
+
+# Normalize metrics to [0, 1]
+centrality_measures_norm              <- centrality_measures[, -4]
+centrality_measures_norm$disruption   <- rescale(centrality_measures$disruption,   to = c(0, 1))
+centrality_measures_norm$eigenvector  <- rescale(centrality_measures$eigenvector,  to = c(0, 1))
+centrality_measures_norm$hd_intersects <- rescale(centrality_measures$no_hd_nodes, to = c(0, 1))
+
+
+# ==============================================================================
+# SECTION 15: Weight Optimization
+# ==============================================================================
+#
+# Searches a grid of weights to find the combination that best balances the
+# contribution of disruption, eigenvector centrality, and high-disruption
+# intersections to the composite score.
+
+library(scales)
+library(dplyr)
+
+calculate_total <- function(weights, df) {
+    rowSums(sweep(df[, c("disruption", "eigenvector", "hd_intersects")],
+                  2, weights, FUN = "*"))
+}
+
+weight_grid <- expand.grid(
+    disruption    = seq(0.1, 0.9, by = 0.1),
+    eigenvector   = seq(0.1, 0.9, by = 0.1),
+    hd_intersects = seq(0.1, 0.9, by = 0.1)
+)
+
+find_best_weights <- function(weight_grid, df) {
+    best_weights    <- NULL
+    best_similarity <- -Inf
+
+    for (i in 1:nrow(weight_grid)) {
+        weights    <- as.numeric(weight_grid[i, ])
+        df$total   <- calculate_total(weights, df)
+        similarity <- sum(
+            cor(df$disruption,    df$total, use = "complete.obs"),
+            cor(df$eigenvector,   df$total, use = "complete.obs"),
+            cor(df$hd_intersects, df$total, use = "complete.obs")
+        )
+        if (!is.na(similarity) && similarity > best_similarity) {
+            best_similarity <- similarity
+            best_weights    <- weights
+        }
+    }
+    return(best_weights)
+}
+
+best_weights <- find_best_weights(weight_grid, centrality_measures_norm)
+print(best_weights)
+
+# Apply best weights and sort
+centrality_measures_norm$total      <- calculate_total(best_weights, centrality_measures_norm)
+centrality_measures_ordered         <- centrality_measures_norm[order(-centrality_measures_norm$total), ]
+
+
+# ==============================================================================
+# SECTION 16: Diagnostic Plots — Metric Relationships
+# ==============================================================================
+
+library(ggplot2)
+library(gridExtra)
+
+df <- centrality_measures_ordered
+
+plot1 <- ggplot(df, aes(x = disruption, y = eigenvector)) +
+    geom_point() + geom_smooth(method = "lm", col = "blue") +
+    labs(title = "Disruption vs. Eigenvector Centrality",
+         x = "Disruption", y = "Eigenvector Centrality")
+
+plot2 <- ggplot(df, aes(x = disruption, y = hd_intersects)) +
+    geom_point() + geom_smooth(method = "lm", col = "blue") +
+    labs(title = "Disruption vs. High Disruption Intersections",
+         x = "Disruption", y = "High Disruption Intersections")
+
+plot3 <- ggplot(df, aes(x = eigenvector, y = hd_intersects)) +
+    geom_point() + geom_smooth(method = "lm", col = "blue") +
+    labs(title = "Eigenvector Centrality vs. High Disruption Intersections",
+         x = "Eigenvector Centrality", y = "High Disruption Intersections")
+
+plot4 <- ggplot(df, aes(x = disruption, y = total)) +
+    geom_point() + geom_smooth(method = "lm", col = "blue") +
+    labs(title = "Disruption vs. Total",
+         x = "Disruption", y = "Total")
+
+plot5 <- ggplot(df, aes(x = eigenvector, y = total)) +
+    geom_point() + geom_smooth(method = "lm", col = "blue") +
+    labs(title = "Eigenvector Centrality vs. Total",
+         x = "Eigenvector Centrality", y = "Total")
+
+plot6 <- ggplot(df, aes(x = hd_intersects, y = total)) +
+    geom_point() + geom_smooth(method = "lm", col = "blue") +
+    labs(title = "High Disruption Intersections vs. Total",
+         x = "High Disruption Intersections", y = "Total")
+
+grid.arrange(plot1, plot2, plot3, plot4, plot5, plot6, ncol = 2)
+
+# Output top entries
+centrality_measures_ordered <- centrality_measures_norm[order(-centrality_measures_norm$total), ]
+head(centrality_measures[order(-centrality_measures_norm$disruption), ], n = 6)
+head(centrality_measures_ordered, n = 10)
+
+
+# ==============================================================================
+# SECTION 17: Validation — Text Length vs. Disruption Score
+# ==============================================================================
+#
+# Tests whether disruption scores are confounded by text length.
+
+library(quanteda)
+library(ggplot2)
+library(dplyr)
+
+# Calculate token count for each text
+text_lengths <- data.frame(
+    short_name  = docvars(corpus_sub_sub, "short_name"),
+    token_count = ntoken(corpus_sub_sub),
+    stringsAsFactors = FALSE
+)
+
+# Merge with disruption scores and metadata
+length_disruption_df <- merge(text_lengths, result_dfr, by = "short_name")
+
+metadata_subset      <- docvars(corpus_sub_sub)[, c("short_name", "author", "title", "year")]
+length_disruption_df <- merge(length_disruption_df, metadata_subset, by = "short_name")
+
+# Correlation analysis
+cor_pearson     <- cor(length_disruption_df$token_count,
+                       length_disruption_df$comp_w_decay, method = "pearson")
+cor_spearman    <- cor(length_disruption_df$token_count,
+                       length_disruption_df$comp_w_decay, method = "spearman")
+cor_test_result <- cor.test(length_disruption_df$token_count,
+                             length_disruption_df$comp_w_decay, method = "pearson")
+
+cat("\n=== CORRELATION ANALYSIS: TEXT LENGTH vs DISRUPTION SCORE ===\n\n")
+cat(paste("Pearson correlation coefficient:",  round(cor_pearson,  3), "\n"))
+cat(paste("Spearman correlation coefficient:", round(cor_spearman, 3), "\n"))
+cat(paste("P-value:", round(cor_test_result$p.value, 4), "\n"))
+cat(paste("95% Confidence Interval:",
+          paste(round(cor_test_result$conf.int, 3), collapse = " to "), "\n\n"))
+
+interpretation <- if (abs(cor_pearson) < 0.3) "weak" else
+                  if (abs(cor_pearson) < 0.7) "moderate" else "strong"
+cat(paste("Interpretation: The correlation is", interpretation, "\n"))
+
+if (cor_test_result$p.value < 0.05) {
+    cat("The correlation is statistically significant (p < 0.05)\n")
+} else {
+    cat("The correlation is NOT statistically significant (p >= 0.05)\n")
+}
+
+# R-squared
+lm_model  <- lm(comp_w_decay ~ token_count, data = length_disruption_df)
+r_squared <- summary(lm_model)$r.squared
+cat(paste("\nR-squared:", round(r_squared, 3),
+          "(Text length explains", round(r_squared * 100, 1),
+          "% of variance in disruption scores)\n"))
+
+# Figure 1: scatter plot
+p1 <- ggplot(length_disruption_df, aes(x = token_count, y = comp_w_decay)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_smooth(method = "lm", color = "blue", se = TRUE) +
+    labs(title    = "Text Length vs. Disruption Score",
+         subtitle = paste0("Pearson r = ", round(cor_pearson, 3),
+                           ", p = ", round(cor_test_result$p.value, 4)),
+         x = "Text Length (Token Count)",
+         y = "Disruption Score (with Decay)") +
+    theme_minimal() +
+    theme(plot.title    = element_text(face = "bold", size = 14),
+          plot.subtitle = element_text(size = 10))
+
+print(p1)
+
+# Outlier detection
+length_disruption_df$z_length     <- scale(length_disruption_df$token_count)
+length_disruption_df$z_disruption <- scale(length_disruption_df$comp_w_decay)
+length_disruption_df$residual     <- residuals(lm_model)
+
+outliers <- length_disruption_df[
+    abs(length_disruption_df$residual) > 1.5 * sd(length_disruption_df$residual), ]
+
+cat("\n=== NOTABLE CASES (Large Residuals) ===\n")
+cat("Texts whose disruption scores are NOT well-predicted by their length:\n\n")
+outliers_ordered <- outliers[order(-abs(outliers$residual)), ]
+for (i in 1:min(10, nrow(outliers_ordered))) {
+    cat(paste0(i, ". ", outliers_ordered$title[i],
+               " (", outliers_ordered$year[i], ")\n",
+               "   Length: ",     outliers_ordered$token_count[i],
+               " tokens | Disruption: ",
+               round(outliers_ordered$comp_w_decay[i], 3),
+               " | Residual: ",
+               round(outliers_ordered$residual[i], 3), "\n\n"))
+}
+
+# Summary statistics
+cat("\n=== SUMMARY STATISTICS ===\n\n")
+cat("Text Length:\n")
+cat(paste("  Mean:",   round(mean(length_disruption_df$token_count),   0), "tokens\n"))
+cat(paste("  Median:", round(median(length_disruption_df$token_count), 0), "tokens\n"))
+cat(paste("  Range:",  min(length_disruption_df$token_count), "-",
+                       max(length_disruption_df$token_count), "tokens\n\n"))
+
+cat("Disruption Score (with Decay):\n")
+cat(paste("  Mean:",   round(mean(length_disruption_df$comp_w_decay),   3), "\n"))
+cat(paste("  Median:", round(median(length_disruption_df$comp_w_decay), 3), "\n"))
+cat(paste("  Range:",  round(min(length_disruption_df$comp_w_decay), 3), "-",
+                       round(max(length_disruption_df$comp_w_decay), 3), "\n"))
+
+# Save merged dataframe to file
+write.csv(length_disruption_df, "length_disruption_analysis.csv", row.names = FALSE)
+cat("\nResults saved to: length_disruption_analysis.csv\n")
+
+# Figure 2: disruption scores by text length quartile
+length_disruption_df$length_quartile <- cut(
+    length_disruption_df$token_count,
+    breaks         = quantile(length_disruption_df$token_count, probs = 0:4/4),
+    labels         = c("Q1 (Shortest)", "Q2", "Q3", "Q4 (Longest)"),
+    include.lowest = TRUE
+)
+
+p2 <- ggplot(length_disruption_df, aes(x = length_quartile, y = comp_w_decay)) +
+    geom_boxplot(fill = "lightblue", alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.4) +
+    labs(title = "Disruption Scores by Text Length Quartile",
+         x     = "Text Length Quartile",
+         y     = "Disruption Score (with Decay)") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 14))
+
+print(p2)
