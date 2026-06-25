@@ -1,0 +1,734 @@
+# Draft
+
+# ==============================================================================
+# Contested Ground: Code Repository
+# ==============================================================================
+#
+# This repository contains the computational code for:
+#
+# xxx (xxxx). "xxx." xxx. xxx
+#
+# Overview
+# --------
+# This code implements a text-agnostic instrument for locating discursive
+# tension within a single literary work. The "contested ground" framework
+# learns a text's own internal registers from word company alone, builds a
+# recursive taxonomy of words used alike, and then measures, at every
+# branching, how far individual words are pulled between rival registers. Each
+# branching must beat randomised rivals to exist, and each contestation score
+# is calibrated against random re-dealings of the children among the parent's
+# words, so the reading rests on the text's own structure rather than on
+# imposed categories. A univocal text yields no branchings, and the report
+# says so. The final test is the concordance, not the q-value.
+#
+# How the instrument works, in plain terms:
+#  1. It keeps a text's content words.
+#  2. It learns which words keep company with which above chance (PPMI), and
+#     from that which words are used alike (those that keep company with the
+#     same crowd).
+#  3. It builds the text's taxonomy: communities of words used alike, found
+#     recursively, where every branching must beat randomised rivals to exist.
+#  4. At every branching it scores each parent word for how it divides between
+#     the children, as even x exclusive x divide (each factor in 0..1):
+#       even      leans on its top two children evenly
+#       exclusive leans on those two only (when there are three or more)
+#       divide    those two children are genuinely different ways of speaking
+#  5. It calibrates every score against random re-dealings of the children
+#     among the parent's words and prints concordance lines.
+#
+# Sections
+# --------
+#  1. Setup and Configuration
+#  2. Load Required Libraries
+#  3. The Instrument — Helper Functions
+#  4. The Instrument — Contestation Analysis
+#  5. Application to Text — Annotation and Run
+#
+# Sections 3 and 4 define the instrument as a text-agnostic function that takes
+# any token stream. Section 5 loads and annotates a real text and runs the
+# instrument on it. This separation keeps the instrument testable: a companion
+# validation suite can load the instrument with RUN_TEXT set to FALSE and run
+# it on synthetic texts with planted tensions and on shuffled controls.
+#
+# Key Functions
+# -------------
+#   knee_index()           - Parameter-free elbow detector, used to read the
+#                            vocabulary floor off the frequency curve
+#   knn_graph()            - Builds a mutual k-NN graph on a similarity
+#                            submatrix, with sqrt(n) neighbours chosen locally
+#   score_node()           - Scores every parent word at one branching for how
+#                            it divides between the children
+#   run_contested_ground() - The instrument: takes an annotated token stream
+#                            and returns the taxonomy, scores, and report
+#
+# Requirements
+# ------------
+# R Version:
+#   Code was developed using R version 4.2.3 "Shortstop Beagle".
+#   May require adjustments for other R versions.
+#
+# Required R Packages:
+#   Matrix      Sparse matrix operations
+#   igraph      Network construction and community detection
+#   dplyr       Data manipulation
+#   tidyr       Data reshaping
+#   stringr     String handling
+#   udpipe      Tokenisation, lemmatisation, and POS annotation (Section 5)
+#
+# Optional:
+#   hunspell    Dictionary check to drop non-word lemmas (DROP_NONWORDS)
+#
+# Data Requirements
+# -----------------
+# - A plain-text (.txt) file of the work to be analysed, named in Section 1.
+# - A udpipe English model. If none is found in the working directory, the
+#   model is downloaded automatically on first run.
+# - On first run the annotation is cached as an .rds file in the working
+#   directory and reused on subsequent runs.
+#
+# Usage
+# -----
+# 1. Place the text file in your working directory.
+# 2. Set the working directory in Section 1 and set TEXT_FILE and TEXT_TITLE
+#    to match your text.
+# 3. Run the script sequentially. Sections 3 and 4 define the instrument.
+#    Section 5 applies it to the named text.
+# 4. To load the instrument without running the text analysis (for the
+#    companion validation suite), set RUN_TEXT <- FALSE before sourcing.
+#
+# Output
+# ------
+# The pipeline produces:
+# - A printed CONTESTED GROUND REPORT, covering the text's taxonomy, the most
+#   contested words, concordance (KWIC) lines for the strongest cases, the
+#   fault lines between child registers, and the fault lines the text keeps
+#   most apart.
+# - An invisible list returned by run_contested_ground() containing the report
+#   text, the per-word scores, the taxonomy nodes, the vocabulary, and summary
+#   counts, for further analysis.
+#
+# Citation
+# --------
+# If you use this code in your research, please cite:
+#
+# @article{xxx,
+#   title   = {xxx},
+#   author  = {xxx},
+#   journal = {xxx},
+#   year    = {xxxx},
+#   volume  = {xxx},
+#   number  = {xxx},
+#   doi     = {xxx}
+# }
+#
+# License
+# -------
+# This code is provided under the Creative Commons Attribution License
+# (CC BY 4.0), matching the license of the published article. You are free
+# to use, adapt, and distribute this code for any purpose, provided you
+# give appropriate credit.
+#
+# Contact
+# -------
+# For questions or issues, please contact:
+#   Grant Hamilton: hamilton@cuhk.edu.hk
+#   Department of English, Chinese University of Hong Kong
+#
+# Notes
+# -----
+# - The code prioritizes clarity and reproducibility over computational
+#   efficiency.
+# - The token-shuffle rivals and the per-branching calibration are the most
+#   memory-intensive steps. The rivals hold N_SPLIT_NULL similarity matrices
+#   at once (roughly N^2 doubles each).
+# - All random seeds are set explicitly (NULL_SEED) to ensure reproducibility.
+# - The reading test is the concordance: whether a human reader recognises the
+#   tension in the reported lines. The q-value is context, not the verdict.
+#
+# Version History
+# ---------------
+# Version 1.0 (xxx): Initial public release accompanying the companion essay.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+setwd("...")   # Set your working directory
+
+# ---- Inputs (used by Section 5; the instrument itself is text-agnostic) ------
+TEXT_FILE  <- "Middlemarch.txt"
+TEXT_TITLE <- "Middlemarch"
+
+# ---- Definitional choices (not tuned thresholds) ----------------------------
+CONTENT_UPOS  <- c("NOUN", "VERB", "ADJ")  # PROPN: entities; ADV: function-like
+DROP_NONWORDS <- TRUE                       # dictionary-check lemmas (Section 5)
+
+ALPHA        <- 0.05    # FDR for the calibration column
+N_NULL       <- 200L    # re-dealings per branching for word calibration
+N_SPLIT_NULL <- 20L     # randomised rivals each branching must beat
+NULL_SEED    <- 1L
+
+MIN_REGISTER_FLOOR <- 5L   # legibility floor for any group
+
+SHOW_TOP_CONTESTED <- 25L
+LABEL_WORDS        <- 4L
+MAX_FAULTLINES     <- 12L
+SHOW_KWIC_FOR      <- 10L
+KWIC_PER_WORD      <- 2L
+
+
+# ==============================================================================
+# SECTION 2: Load Required Libraries
+# ==============================================================================
+
+suppressPackageStartupMessages({
+    library(dplyr)
+    library(stringr)
+    library(tidyr)
+    library(Matrix)
+})
+if (!requireNamespace("igraph", quietly = TRUE))
+    install.packages("igraph", quiet = TRUE)
+
+
+# ==============================================================================
+# SECTION 3: The Instrument — Helper Functions
+# ==============================================================================
+
+# Parameter-free knee detector: point of maximum distance from the chord.
+knee_index <- function(y) {
+    n <- length(y)
+    if (n < 3L) return(n)
+    x  <- seq_len(n)
+    xn <- (x - x[1]) / (x[n] - x[1])
+    yn <- (y - min(y)) / (max(y) - min(y) + 1e-12)
+    num <- abs((yn[n] - yn[1]) * xn - (xn[n] - xn[1]) * yn +
+                   xn[n] * yn[1] - yn[n] * xn[1])
+    den <- sqrt((yn[n] - yn[1])^2 + (xn[n] - xn[1])^2) + 1e-12
+    which.max(num / den)
+}
+
+# Mutual-kNN graph on a similarity submatrix; sqrt(n) neighbours, locally.
+knn_graph <- function(sim) {
+    n <- nrow(sim)
+    m <- max(2L, round(sqrt(n)))
+    A <- matrix(0, n, n)
+    for (i in seq_len(n)) {
+        nb <- order(sim[i, ], decreasing = TRUE)[seq_len(min(m, n - 1L))]
+        A[i, nb] <- sim[i, nb]
+    }
+    A <- pmax(A, t(A))
+    igraph::graph_from_adjacency_matrix(A, mode = "undirected",
+                                        weighted = TRUE, diag = FALSE)
+}
+
+# Score all parent words at one branching given child assignment `lab` (1..m).
+# sub = parent similarity submatrix (diag 0). Used for the observed assignment
+# and for every null re-dealing alike.
+score_node <- function(sub, lab, m) {
+    np <- nrow(sub)
+    G  <- matrix(0, np, m); G[cbind(seq_len(np), lab)] <- 1
+    nC <- colSums(G)
+    CSG <- sub %*% G                                  # similarity mass to child
+    den <- matrix(rep(nC, each = np), np, m) - G      # exclude self from own child
+    SH  <- CSG / pmax(den, 1)
+    SH  <- SH / pmax(rowSums(SH), 1e-12)              # shares over children
+    Wm  <- t(G) %*% CSG
+    within <- diag(Wm) / pmax(nC * (nC - 1), 1)
+    Dm <- matrix(0, m, m)
+    for (a in seq_len(m - 1L)) for (b in (a + 1L):m) {
+        btw <- Wm[a, b] / max(nC[a] * nC[b], 1)
+        d   <- 1 - btw / (sqrt(within[a] * within[b]) + 1e-12)
+        Dm[a, b] <- Dm[b, a] <- max(0, min(1, d))
+    }
+    even <- excl <- divv <- sc <- numeric(np)
+    c1 <- c2 <- integer(np)
+    for (i in seq_len(np)) {
+        o  <- order(SH[i, ], decreasing = TRUE)
+        s1 <- SH[i, o[1]]; s2 <- SH[i, o[2]]
+        s3 <- if (m >= 3L) SH[i, o[3]] else 0
+        e  <- if (s1 > 0) s2 / s1 else 0
+        x  <- if (m >= 3L) { if (s2 + s3 > 0) (s2 - s3) / (s2 + s3) else 0 } else 1
+        d  <- Dm[o[1], o[2]]
+        even[i] <- e; excl[i] <- x; divv[i] <- d; sc[i] <- e * x * d
+        c1[i] <- o[1]; c2[i] <- o[2]
+    }
+    list(score = sc, even = even, excl = excl, div = divv, c1 = c1, c2 = c2)
+}
+
+
+# ==============================================================================
+# SECTION 4: The Instrument — Contestation Analysis
+# ==============================================================================
+
+# content   : data frame with columns lemma, token, sent_uid (reading order)
+# sent_text : named character vector, sent_uid -> sentence text (for KWIC)
+# title     : report header
+# Returns (invisibly) list(report, scores, nodes, vocab, n_accepted, ...).
+run_contested_ground <- function(content, sent_text, title,
+                                 quiet = FALSE, print_report = TRUE) {
+    say <- function(...) if (!quiet) message(...)
+
+    # -- Vocabulary: floor read off the frequency curve ------------------------
+    say("2. Selecting vocabulary ...")
+    fr       <- content %>% count(lemma, name = "freq") %>% arrange(desc(freq))
+    floor_at <- fr$freq[knee_index(log(fr$freq))]
+    vocab    <- fr %>% filter(freq >= floor_at)
+    if (DROP_NONWORDS && requireNamespace("hunspell", quietly = TRUE)) {
+        keep  <- hunspell::hunspell_check(vocab$lemma)
+        say("   dropped ", sum(!keep), " non-dictionary lemmas")
+        vocab <- vocab[keep, , drop = FALSE]
+    }
+    vocab <- vocab %>% mutate(id = row_number())
+    N     <- nrow(vocab)
+    say("   frequency floor: ", floor_at, "  |  vocabulary size N = ", N)
+
+    vmap       <- setNames(vocab$id, vocab$lemma)
+    idx_stream <- unname(vmap[content$lemma])
+    MIN_REGISTER <- max(MIN_REGISTER_FLOOR, round(N / 200))
+
+    n_content   <- nrow(content)
+    n_sentences <- length(unique(content$sent_uid))
+
+    # -- Company (PPMI) and usage similarity -----------------------------------
+    say("3. Building company (PPMI) and usage similarity ...")
+    words_per_sent <- content %>% count(sent_uid, name = "n") %>% pull(n)
+    WINDOW <- as.integer(max(2L, round(median(words_per_sent))))
+    say("   company window: ", WINDOW, " content words")
+
+    build_cooc <- function(stream) {
+        L <- length(stream)
+        ti <- integer(0); tj <- integer(0); tx <- numeric(0)
+        for (d in seq_len(WINDOW)) {
+            a  <- stream[1:(L - d)]
+            b  <- stream[(d + 1L):L]
+            ok <- which(!is.na(a) & !is.na(b))
+            if (!length(ok)) next
+            ti <- c(ti, a[ok], b[ok])
+            tj <- c(tj, b[ok], a[ok])
+            tx <- c(tx, rep(1 / d, length(ok)), rep(1 / d, length(ok)))
+        }
+        if (!length(ti)) return(matrix(0, N, N))
+        co <- as.matrix(sparseMatrix(i = ti, j = tj, x = tx, dims = c(N, N)))
+        diag(co) <- 0
+        co
+    }
+    ppmi_of <- function(co) {
+        total <- sum(co)
+        if (total <= 0) return(matrix(0, N, N))
+        wi  <- rowSums(co)
+        pmi <- log((co * total) / outer(wi, wi))
+        pmi[!is.finite(pmi)] <- 0
+        pp  <- pmax(pmi, 0)
+        diag(pp) <- 0
+        pp
+    }
+    cos_of <- function(pp) {
+        r <- sqrt(rowSums(pp^2)); r[r == 0] <- 1e-12
+        cs <- (pp %*% t(pp)) / outer(r, r)
+        diag(cs) <- 0
+        cs[cs < 0] <- 0
+        cs
+    }
+
+    co_obs   <- build_cooc(idx_stream)   # kept: apartness reads avoidance from it
+    wi_obs   <- rowSums(co_obs)
+    total_obs <- sum(co_obs)
+    ppmi <- ppmi_of(co_obs)
+    cosS <- cos_of(ppmi)
+    rownames(cosS) <- colnames(cosS) <- vocab$lemma
+
+    # Token-shuffle rivals for the taxonomy trials: the same words, the same
+    # windowing mechanics, the same frequencies, and no register structure.
+    # Any branching, at any depth, must show more shared-crowd structure among
+    # its words than those words have in ANY of these rivals. Memory note: this
+    # holds N_SPLIT_NULL similarity matrices at once (~N^2 doubles each).
+    say("   preparing ", N_SPLIT_NULL, " token-shuffle rivals ...")
+    set.seed(NULL_SEED)
+    null_cos <- vector("list", N_SPLIT_NULL)
+    for (b in seq_len(N_SPLIT_NULL)) {
+        null_cos[[b]] <- cos_of(ppmi_of(build_cooc(sample(idx_stream))))
+        if (b %% 5L == 0L) say("   rival ", b, " / ", N_SPLIT_NULL)
+    }
+
+    node_label <- function(idx, nw = LABEL_WORDS) {
+        strg <- rowSums(cosS[idx, idx, drop = FALSE])
+        top  <- vocab$lemma[idx[order(strg, decreasing = TRUE)]]
+        paste(head(top, nw), collapse = " / ")
+    }
+
+    # -- The taxonomy: recursive, null-tested splits ----------------------------
+    say("4. Building the taxonomy (recursive, null-tested splits) ...")
+    set.seed(NULL_SEED)
+    nodes <- list(list(id = 1L, idx = seq_len(N), depth = 0L,
+                       parent = NA_integer_, children = integer(0)))
+    queue   <- 1L
+    n_tried <- 0L; n_accepted <- 0L
+
+    while (length(queue) > 0) {
+        nid   <- queue[1]; queue <- queue[-1]
+        idx   <- nodes[[nid]]$idx
+        n_sub <- length(idx)
+        if (n_sub < 2L * MIN_REGISTER) next
+
+        sub <- cosS[idx, idx, drop = FALSE]
+        g   <- knn_graph(sub)
+        cl  <- igraph::cluster_louvain(g, weights = igraph::E(g)$weight)
+        mem <- as.integer(igraph::membership(cl))
+        if (length(unique(mem)) < 2L) next
+
+        n_tried <- n_tried + 1L
+        Q_obs <- igraph::modularity(cl)
+
+        # The trial: do THESE words show more shared-crowd structure in the
+        # real text than in every token-shuffled rival?
+        beaten <- TRUE
+        for (b in seq_len(N_SPLIT_NULL)) {
+            cs <- null_cos[[b]][idx, idx, drop = FALSE]
+            gn <- knn_graph(cs)
+            Q_null <- igraph::modularity(
+                igraph::cluster_louvain(gn, weights = igraph::E(gn)$weight))
+            if (Q_obs <= Q_null) { beaten <- FALSE; break }
+        }
+        if (!beaten) next
+
+        # Fold undersized children into the most similar big sibling; if NO
+        # child reaches the floor, the split is rejected outright.
+        szs <- table(mem)
+        if (!any(szs >= MIN_REGISTER)) next
+        repeat {
+            szs   <- table(mem)
+            big   <- as.integer(names(szs)[szs >= MIN_REGISTER])
+            small <- as.integer(names(szs)[szs <  MIN_REGISTER])
+            if (length(small) == 0L) break
+            for (w in which(mem %in% small)) {
+                simv   <- sapply(big, function(r) mean(sub[w, mem == r]))
+                mem[w] <- big[which.max(simv)]
+            }
+        }
+        ids <- sort(unique(mem))
+        if (length(ids) < 2L) next
+
+        n_accepted <- n_accepted + 1L
+        ch_ids <- integer(length(ids))
+        for (ii in seq_along(ids)) {
+            cid <- length(nodes) + 1L
+            nodes[[cid]] <- list(id = cid, idx = idx[mem == ids[ii]],
+                                 depth = nodes[[nid]]$depth + 1L,
+                                 parent = nid, children = integer(0))
+            ch_ids[ii] <- cid
+            queue <- c(queue, cid)
+        }
+        nodes[[nid]]$children <- ch_ids
+        say("   split N", nid, " (", n_sub, " words) -> ",
+            paste(sapply(ch_ids, function(c) length(nodes[[c]]$idx)),
+                  collapse = " + "))
+    }
+
+    internal <- which(sapply(nodes, function(nd) length(nd$children) > 0))
+    leaves   <- which(sapply(nodes, function(nd) length(nd$children) == 0))
+    rm(null_cos); invisible(gc(verbose = FALSE))   # rivals no longer needed
+    say("   taxonomy: ", n_accepted, " branchings (of ", n_tried,
+        " proposed), ", length(leaves), " leaf registers")
+
+    # -- Contestation at every branching ----------------------------------------
+    say("5. Scoring contestation at each branching ...")
+    rows <- list()
+    for (nid in internal) {
+        nd   <- nodes[[nid]]
+        pidx <- nd$idx
+        ch   <- nd$children
+        m    <- length(ch)
+        lab  <- integer(length(pidx))
+        for (a in seq_len(m)) lab[pidx %in% nodes[[ch[a]]]$idx] <- a
+        sub  <- cosS[pidx, pidx, drop = FALSE]
+        o    <- score_node(sub, lab, m)
+        rows[[length(rows) + 1L]] <- data.frame(
+            node  = nid, depth = nd$depth, parent_n = length(pidx),
+            word  = pidx, c1 = ch[o$c1], c2 = ch[o$c2],
+            even  = o$even, excl = o$excl, div = o$div, score = o$score)
+    }
+    scores <- if (length(rows)) bind_rows(rows) else
+        data.frame(node = integer(0), depth = integer(0), parent_n = integer(0),
+                   word = integer(0), c1 = integer(0), c2 = integer(0),
+                   even = numeric(0), excl = numeric(0), div = numeric(0),
+                   score = numeric(0))
+
+    # -- Calibration -------------------------------------------------------------
+    n_sig <- 0L; n_chance <- 0
+    if (nrow(scores) > 0) {
+        say("6. Calibrating (", N_NULL, " re-dealings per branching) ...")
+        set.seed(NULL_SEED)
+        scores$ge <- 0L
+        scores$z  <- 0
+        for (nid in internal) {
+            nd   <- nodes[[nid]]
+            pidx <- nd$idx
+            ch   <- nd$children
+            m    <- length(ch)
+            lab  <- integer(length(pidx))
+            for (a in seq_len(m)) lab[pidx %in% nodes[[ch[a]]]$idx] <- a
+            sub  <- cosS[pidx, pidx, drop = FALSE]
+            sel  <- which(scores$node == nid)
+            obs_sc <- scores$score[sel]
+            ge_n   <- integer(length(sel))
+            s1 <- numeric(length(sel)); s2 <- numeric(length(sel))
+            for (b in seq_len(N_NULL)) {
+                ns   <- score_node(sub, sample(lab), m)$score
+                ge_n <- ge_n + (ns >= obs_sc)
+                s1   <- s1 + ns
+                s2   <- s2 + ns^2
+            }
+            mu <- s1 / N_NULL
+            sd <- sqrt(pmax(s2 / N_NULL - mu^2, 0))
+            # guard: a near-zero null sd makes z explode on noise; floor each
+            # word's sd at the 10th-percentile sd of its own branching
+            sd <- pmax(sd, quantile(sd[sd > 0], 0.10, na.rm = TRUE), 1e-9)
+            scores$ge[sel] <- ge_n
+            scores$z[sel]  <- (obs_sc - mu) / sd   # effect vs THIS branching's chance
+        }
+        scores$p <- (1 + scores$ge) / (1 + N_NULL)
+        scores$q <- p.adjust(scores$p, method = "BH")
+        n_sig    <- sum(scores$q <= ALPHA)
+        n_chance <- ALPHA * nrow(scores)
+    }
+
+    # -- Report --------------------------------------------------------------------
+    say("7. Writing report ...")
+    kwic_lines <- function(w_lemma, n_lines = KWIC_PER_WORD) {
+        rws <- content %>% filter(lemma == w_lemma)
+        if (nrow(rws) == 0L) return(character(0))
+        cand <- rws %>%
+            distinct(sent_uid, .keep_all = TRUE) %>%
+            mutate(s = unname(sent_text[sent_uid])) %>%
+            filter(!is.na(s)) %>%
+            mutate(len = nchar(s)) %>%
+            arrange(len)
+        out <- character(0)
+        for (i in seq_len(min(n_lines, nrow(cand)))) {
+            s   <- cand$s[i]
+            tok <- cand$token[i]
+            s   <- str_replace(s, fixed(tok), toupper(tok))
+            if (nchar(s) > 160L) {
+                at <- str_locate(s, fixed(toupper(tok)))[1]
+                if (is.na(at)) at <- 1L
+                lo <- max(1L, at - 70L); hi <- min(nchar(s), at + 90L)
+                s  <- paste0(if (lo > 1) "..." else "", substr(s, lo, hi),
+                             if (hi < nchar(s)) "..." else "")
+            }
+            out <- c(out, s)
+        }
+        out
+    }
+
+    R    <- character(0)
+    add  <- function(fmt, ...) {
+        R <<- c(R, if (...length() == 0L) fmt else sprintf(fmt, ...))
+    }
+    rule <- function(ch = "-") add(strrep(ch, 74))
+
+    add(""); rule("="); add("  CONTESTED GROUND REPORT  —  %s", title); rule("="); add("")
+    add("Text      : %d content tokens across %d sentences", n_content, n_sentences)
+    add("Vocabulary: %d words (frequency floor %d, set by the curve's knee)", N, floor_at)
+    add("Taxonomy  : %d branchings accepted of %d proposed; %d leaf registers",
+        n_accepted, n_tried, length(leaves))
+    add("Window    : %d content words (this text's median sentence)", WINDOW)
+    add("")
+
+    add("THE TEXT'S TAXONOMY (every branching beat %d randomised rivals;", N_SPLIT_NULL)
+    add("a word's tension is measured at the branchings on its own lineage)")
+    rule()
+    print_tree <- function(nid, depth) {
+        nd  <- nodes[[nid]]
+        tag <- if (length(nd$children)) "+" else "-"
+        add("%s%s N%-3d [n=%4d]  %s", strrep("  ", depth), tag, nd$id,
+            length(nd$idx), node_label(nd$idx))
+        for (c in nd$children) print_tree(c, depth + 1L)
+    }
+    print_tree(1L, 0L)
+    add("")
+
+    if (n_accepted == 0L) {
+        add("No branching beat its null: by this instrument's lights the text")
+        add("is univocal, and contestation is undefined. That is a finding.")
+    } else {
+        add("CONTESTATION = even x exclusive x divide   (each factor in 0..1)")
+        add("  even      : leans on its top two children evenly")
+        add("  exclusive : leans on those two only (when a branching has 3+ children)")
+        add("  divide    : the two children are genuinely different ways of speaking")
+        add("")
+
+        add("CALIBRATION: %d of %d (branching, word) scores exceed their re-dealt",
+            n_sig, nrow(scores))
+        add("yardstick at q <= %.2f (%.1f expected by chance). Context for the",
+            ALPHA, n_chance)
+        add("ranking; the reading test is the concordance.")
+        rule()
+        add("")
+
+        bestrow <- scores %>%
+            group_by(word) %>%
+            slice_max(z, n = 1, with_ties = FALSE) %>%
+            ungroup() %>%
+            arrange(desc(z))
+
+        add("MOST CONTESTED WORDS (top %d by z = effect vs the chance of the",
+            SHOW_TOP_CONTESTED)
+        add("word's own branching, so scales compare honestly; 'at' = branching)")
+        rule()
+        add("  %-16s %6s %6s %5s %5s %5s %6s   %s",
+            "word", "z", "score", "even", "excl", "div", "q", "at")
+        for (i in seq_len(min(SHOW_TOP_CONTESTED, nrow(bestrow)))) {
+            rr <- bestrow[i, ]
+            add("  %-16s %6.1f %6.3f %5.2f %5.2f %5.2f %6.3f   N%d: N%d <> N%d",
+                vocab$lemma[rr$word], rr$z, rr$score, rr$even, rr$excl, rr$div,
+                rr$q, rr$node, rr$c1, rr$c2)
+        }
+        add("")
+
+        add("READING THE TENSION (concordance for the top %d)", SHOW_KWIC_FOR)
+        rule()
+        for (i in seq_len(min(SHOW_KWIC_FOR, nrow(bestrow)))) {
+            rr <- bestrow[i, ]
+            add("  %s   (%s", vocab$lemma[rr$word],
+                node_label(nodes[[rr$c1]]$idx))
+            add("        vs %s)", node_label(nodes[[rr$c2]]$idx))
+            for (s in kwic_lines(vocab$lemma[rr$word]))
+                add("      | %s", s)
+            add("")
+        }
+
+        add("FAULT LINES (child pairs, ranked by summed z of their words —")
+        add("collective tension beyond each branching's own chance; apartness =")
+        add("how far the two registers' company falls below frequency expectation)")
+        rule()
+
+        # Apartness of a register pair: observed windowed co-occurrence mass
+        # between their words, against the frequency expectation (the same
+        # marginal expectation PMI uses). 1 = the registers keep fully out of
+        # each other's company; 0 = they cohabit at or above expectation.
+        apart_of <- function(a, b) {
+            ia <- nodes[[a]]$idx; ib <- nodes[[b]]$idx
+            ex <- sum(wi_obs[ia]) * sum(wi_obs[ib]) / total_obs
+            if (ex <= 0) return(NA_real_)
+            max(0, min(1, 1 - sum(co_obs[ia, ib]) / ex))
+        }
+
+        fl <- scores %>%
+            mutate(pair = paste0("N", node, ": N", pmin(c1, c2),
+                                 " <> N", pmax(c1, c2))) %>%
+            group_by(pair, node, depth) %>%
+            summarise(zsum     = sum(pmax(z, 0)),
+                      strength = sum(score),
+                      divide   = first(div[order(-z)]),
+                      a = first(pmin(c1, c2)), b = first(pmax(c1, c2)),
+                      .groups  = "drop") %>%
+            arrange(desc(zsum))
+        fl$apart <- mapply(apart_of, fl$a, fl$b)
+
+        show_fl <- function(f) {
+            sel <- scores %>%
+                filter(node == f$node, pmin(c1, c2) == f$a,
+                       pmax(c1, c2) == f$b) %>%
+                arrange(desc(z))
+            add("  %s   zsum %.1f   apartness %.2f   divide %.2f   depth %d",
+                f$pair, f$zsum, f$apart, f$divide, f$depth)
+            add("      %s", node_label(nodes[[f$a]]$idx, 6))
+            add("      vs %s", node_label(nodes[[f$b]]$idx, 6))
+            add("      contested: %s",
+                paste(head(vocab$lemma[sel$word], 6), collapse = ", "))
+            add("")
+        }
+        for (i in seq_len(min(MAX_FAULTLINES, nrow(fl)))) show_fl(fl[i, ])
+
+        add("FAULT LINES THE TEXT KEEPS APART (ranked by zsum x apartness:")
+        add("words pulled between registers the text refuses to let meet —")
+        add("the closest formal analogue of the structural 'unsaid')")
+        rule()
+        deep <- fl %>%
+            filter(!is.na(apart)) %>%
+            arrange(desc(zsum * apart))
+        for (i in seq_len(min(MAX_FAULTLINES, nrow(deep)))) show_fl(deep[i, ])
+    }
+
+    rule("=")
+    add("  End. ")
+    rule("=")
+
+    report <- paste(R, collapse = "\n")
+    if (print_report) cat(report, "\n")
+    invisible(list(report = report, scores = scores, nodes = nodes,
+                   vocab = vocab, n_accepted = n_accepted,
+                   n_tried = n_tried, n_leaves = length(leaves)))
+}
+
+
+# ==============================================================================
+# SECTION 5: Application to Text — Annotation and Run
+# ==============================================================================
+#
+# This section loads and annotates a real text and runs the instrument on it.
+# It runs only when the text file is present and RUN_TEXT is not FALSE. The
+# companion validation suite sets RUN_TEXT <- FALSE so it can load the
+# instrument (Sections 3 and 4) without re-running the whole text analysis.
+
+if (file.exists(TEXT_FILE) && get0("RUN_TEXT", ifnotfound = TRUE)) {
+    suppressPackageStartupMessages(library(udpipe))
+    message("1. Loading and annotating '", TEXT_TITLE, "' ...")
+
+    raw  <- readLines(TEXT_FILE, encoding = "UTF-8", warn = FALSE)
+    text <- str_squish(paste(raw, collapse = " "))
+
+    cache_file <- paste0(gsub("[^A-Za-z0-9]", "_", TEXT_TITLE), "_anno.rds")
+    if (file.exists(cache_file)) {
+        anno <- readRDS(cache_file)
+    } else {
+        model_files <- list.files(pattern = "^english.*\\.udpipe$")
+        udmodel <- if (length(model_files) == 0) {
+            udpipe_load_model(udpipe_download_model(language = "english")$file_model)
+        } else {
+            udpipe_load_model(model_files[1])
+        }
+        stream_words <- strsplit(text, " ", fixed = TRUE)[[1]]
+        grp   <- ceiling(seq_along(stream_words) / 8000L)
+        segs  <- tapply(stream_words, grp, paste, collapse = " ")
+        parts <- lapply(seq_along(segs), function(i) {
+            message("   annotating chunk ", i, " / ", length(segs))
+            as.data.frame(udpipe_annotate(udmodel, x = segs[[i]],
+                                           doc_id = sprintf("c%04d", i)))
+        })
+        anno <- bind_rows(parts)
+        saveRDS(anno, cache_file)
+    }
+
+    anno <- anno %>% mutate(.row = row_number())
+
+    content <- anno %>%
+        filter(upos %in% CONTENT_UPOS, !is.na(lemma),
+               nchar(str_trim(lemma)) > 1) %>%
+        mutate(lemma    = str_to_lower(str_trim(lemma)),
+               sent_uid = paste(doc_id, sentence_id, sep = "_")) %>%
+        arrange(.row)
+
+    if ("sentence" %in% names(anno)) {
+        sent_tab <- anno %>%
+            mutate(sent_uid = paste(doc_id, sentence_id, sep = "_")) %>%
+            distinct(sent_uid, sentence)
+    } else {
+        sent_tab <- anno %>%
+            mutate(sent_uid = paste(doc_id, sentence_id, sep = "_")) %>%
+            group_by(sent_uid) %>%
+            summarise(sentence = paste(token, collapse = " "), .groups = "drop")
+    }
+    sent_text <- setNames(sent_tab$sentence, sent_tab$sent_uid)
+
+    message("   content tokens: ", nrow(content),
+            "  |  sentences: ", length(unique(content$sent_uid)))
+
+    result <- run_contested_ground(content, sent_text, TEXT_TITLE)
+} else {
+    message("Sections 3 and 4 (the instrument) are defined and ready; the text ",
+            "analysis was not run (text file absent, or RUN_TEXT is FALSE).")
+}
