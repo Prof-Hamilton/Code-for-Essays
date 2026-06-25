@@ -1,217 +1,238 @@
+# ==============================================================================
 # Consensus Communities: Code Repository
+# ==============================================================================
+#
+# This repository contains the computational code for:
+#
+# Hamilton, G. & Sorensen, E.P. (2025). "Consensus communities: emergent
+# literary communities and the challenge to genre." Digital Scholarship in
+# the Humanities. https://doi.org/10.1093/llc/fqaf139
+#
+# Overview
+# --------
+# This code implements a computational methodology for understanding literary
+# works within their corpus contexts. The "consensus communities" framework
+# allows texts to self-organise on textual affinities alone, challenging
+# traditional literary taxonomies such as genre, period, and style.
+#
+# The methodology integrates:
+#   - Louvain community detection for network-based clustering
+#   - HDBSCAN clustering for density-based analysis
+#   - Structural Topic Modelling (STM) for identifying semantic patterns
+#   - Sentence embeddings for passage-level analysis
+#
+# The repository comprises two scripts, run in sequence.
+#
+# Sections
+# --------
+# Script A — Literary_Field_Dynamics_Code.R
+#   Implements the core consensus communities framework: constructs hybrid
+#   field tensors from textual relationships, applies a consensus-matrix
+#   approach combining Louvain and HDBSCAN, identifies robust communities
+#   across algorithmic variations, and plots the community structure.
+#     1. Setup and Configuration
+#     2. Load Required Libraries
+#     3. Utility Functions
+#     4. Core Analysis Functions
+#     5. Visualization Functions
+#     6. Main Processing Functions
+#     7. Execute Analysis
+#
+# Script B — Community_Analysis_Code.R
+#   Maps abstract community patterns onto concrete textual passages: uses STM
+#   to identify computational signatures across community texts, builds topic
+#   vectors weighted by FREX word probabilities, scores the similarity between
+#   topic vectors and a target text's sentences, and locates "hotspots" where
+#   several topics converge.
+#     1.  Initial Setup and Configuration
+#     2.  Configuration Parameters
+#     3.  Load Required Libraries
+#     4.  Load and Validate Pre-computed Data
+#     5.  Ollama API Functions
+#     6.  Text Preprocessing and STM Preparation
+#     7.  Automatic K Selection for STM
+#     8.  Fit Final STM Model
+#     9.  Generate LLM Topic Names
+#     10. Create Topic Vectors from Community Texts
+#     11. Analyze Target Text
+#     12. Calculate Similarity Between Topic Vectors and Target Text
+#     13. Identify Top Topics for Target Text
+#     14. Extract Representative Passages
+#     15. Identify Convergence Hotspots
+#     16. Visualize Smoothed Topic Profiles
+#
+# Key Functions
+# -------------
+# Script A:
+#   calculate_hybrid_field_tensor()      - Builds the multidimensional field
+#                                          representation
+#   hybrid_stability_analysis()          - Assesses community stability across
+#                                          iterations
+#   plot_hybrid_communities_2d()         - Plots community structure
+#   analyze_hybrid_communities()         - Calculates community metrics
+#   run_hybrid_literary_field_analysis() - Prepares data and runs the full
+#                                          pipeline
+#
+# Script B:
+#   load_specific_objects() - Selectively loads named objects from a .RData file
+#   call_ollama_generate()  - Calls a local Ollama instance for topic naming
+#   get_ollama_embeddings() - Retrieves sentence embeddings from Ollama
+#
+# Requirements
+# ------------
+# R Version:
+#   Code was developed using R version 4.2.2 ("Innocent and Trusting").
+#   May require adjustments for other R versions.
+#
+# Required R Packages (Script A — Literary Field Dynamics):
+#   Matrix      Sparse matrix operations
+#   igraph      Network analysis and community detection
+#   dbscan      HDBSCAN density-based clustering
+#   cluster     Clustering algorithms
+#   tidyverse   Data manipulation and visualisation
+#   fields      Spatial data analysis
+#   ggplot2     Plotting
+#
+# Required R Packages (Script B — Community Analysis):
+#   quanteda    Text analysis and corpus management
+#   stm         Structural topic modelling
+#   udpipe      NLP preprocessing
+#   dplyr       Data manipulation
+#   tidyr       Data tidying
+#   stringr     String operations
+#   tokenizers  Text tokenisation
+#   httr        HTTP requests for the Ollama API
+#   jsonlite    JSON handling
+#   ggplot2     Plotting
+#
+# Optional (LLM topic naming, Script B):
+#   A local Ollama installation with an embedding model. The default generation
+#   model is "llama3.2" and the default embedding model is
+#   "pankajrajdeo/sentence-transformers_all-minilm-l6-v2". LLM naming can be
+#   turned off by setting USE_LLM_NAMING <- FALSE.
+#
+# Data Requirements
+# -----------------
+# Both scripts require pre-processed input objects. These are produced by the
+# companion methodological pipeline, now published as:
+#
+#   Hamilton, G. & Sorensen, E.P. (2026). "Reconfiguring the ideal order:
+#   ablation and field formation in the twentieth-century Nigerian novel in
+#   English." Digital Humanities Quarterly, 20(1).
+#   https://dhq.digitalhumanities.org/vol/20/1/000858/000858.html
+#
+# Run that repository's pipeline first to generate the inputs below.
+#
+# Script A:
+#   - adj_matrix:          Adjacency matrix of cosine similarities between texts
+#   - centrality_measures: Data frame with eigenvector centrality scores
+#   - result_dfr:          Data frame with semantic disruption scores
+#   - metadata:            Data frame linking text titles to short names
+#   - corpus_sub_sub:      Corpus object containing the texts
+#
+# Script B:
+#   - corpus_sub_sub:      Corpus object containing the texts
+#   - Pre-computed sentence embeddings for all chunks (in .RData format),
+#     together with their chunk IDs and chunk text
+#
+# Usage
+# -----
+# 1. Prepare the input objects with the companion pipeline (see above).
+# 2. Set the working directory at the top of each script.
+# 3. Run Script A to identify communities:
+#       source("Literary_Field_Dynamics_Code.R")
+# 4. Run Script B on a chosen target text:
+#       source("Community_Analysis_Code.R")
+#
+# Both scripts expose configuration parameters near the top. Script A takes a
+# random seed (seed_no) and a stability-iteration count. Script B exposes the
+# topic-count selection (AUTO_K_RUN), the hotspot threshold (SPIKE_PERCENTILE),
+# the number of top topics (NUM_TOP_TOPICS_DOC), and the LLM naming switch
+# (USE_LLM_NAMING).
+#
+# Output
+# ------
+# Script A produces:
+#   - Community assignments for all texts
+#   - Stability metrics (consistency scores)
+#   - A network plot of community structure
+#   - Per-community analysis (size, density, influence scores)
+#
+# Script B produces:
+#   - Top topics for the target text, ranked by similarity
+#   - Representative passages for each topic
+#   - Convergence hotspots where several topics spike together
+#   - A smoothed plot of topic profiles across the text
+#
+# Citation
+# --------
+# If you use this code in your research, please cite:
+#
+# @article{hamilton2025consensus,
+#   title   = {Consensus communities: emergent literary communities and the
+#              challenge to genre},
+#   author  = {Hamilton, Grant and Sorensen, Eli Park},
+#   journal = {Digital Scholarship in the Humanities},
+#   year    = {2025},
+#   doi     = {10.1093/llc/fqaf139}
+# }
+#
+# License
+# -------
+# This code is provided under the Creative Commons Attribution License
+# (CC BY 4.0), matching the license of the published article. You are free
+# to use, adapt, and distribute this code for any purpose, provided you
+# give appropriate credit.
+#
+# Contact
+# -------
+# For questions or issues, please contact:
+#   Grant Hamilton: hamilton@cuhk.edu.hk
+#   Department of English, Chinese University of Hong Kong
+#
+# Acknowledgments
+# ---------------
+# This research was conducted as part of "The African Literary Archive —
+# A Computational Analysis of Literary Influence" (2023–25), funded by
+# Hong Kong's University Grants Committee (UGC) through the General
+# Research Fund (project code: 14614522).
+#
+# Notes
+# -----
+# - The code prioritises clarity and reproducibility over computational
+#   efficiency.
+# - Some operations are time-intensive for large corpora, and memory
+#   requirements scale with corpus size.
+# - Parallel processing options are available in the STM functions.
+# - All random seeds are set explicitly to ensure reproducibility.
+#
+# Version History
+# ---------------
+# Version 2.0 (June 2026): Updated the input-data references now that the
+#                    companion methodological essay is published (Hamilton &
+#                    Sorensen 2026, Digital Humanities Quarterly, 20(1)). The
+#                    placeholders that pointed to a forthcoming pipeline now
+#                    cite the published source.
+# Version 1.0 (December 2025): Initial public release accompanying journal
+#                    publication.
+# ==============================================================================
 
-This repository contains the computational code for:
-
-**Hamilton, G. & Sorensen, E.P. (2025).** "Consensus communities: emergent literary communities and the challenge to genre." *Digital Scholarship in the Humanities*. https://doi.org/10.1093/llc/fqaf139
-
-## Overview
-
-This code implements a novel computational methodology for understanding literary works within their corpus contexts. 
-The "consensus communities" framework enables texts to self-organize based purely on textual affinities, challenging traditional literary taxonomies such as genre, period, and style.
-
-The methodology integrates:
-- **Louvain community detection** for network-based clustering
-- **HDBSCAN clustering** for density-based analysis
-- **Structural Topic Modelling (STM)** for identifying semantic patterns
-- **Sentence embeddings** for passage-level analysis
-
-## Sections
-
-### Section A. `Literary_Field_Dynamics_Code.R`
-
-Implements the core consensus communities framework:
-- Constructs hybrid field tensors from textual relationships
-- Applies consensus matrix approach combining Louvain and HDBSCAN
-- Identifies robust literary communities across algorithmic variations
-- Visualizes community structure
-
-**Key Functions:**
-- `calculate_hybrid_field_tensor()` - Builds multidimensional field representation
-- `hybrid_stability_analysis()` - Assesses community stability across iterations
-- `plot_hybrid_communities_2d()` - Visualizes community structure
-- `analyze_hybrid_communities()` - Calculates community metrics
-
-### Section B. `Community_Analysis_Code.R`
-
-Maps abstract community patterns onto concrete textual passages:
-- Uses STM to identify computational signatures across community texts
-- Creates topic vectors weighted by FREX word probabilities
-- Calculates similarity between topic vectors and target text sentences
-- Identifies "hotspots" where multiple topics converge
-
-**Key Features:**
-- Automatic K selection for optimal topic number
-- LLM-assisted topic naming (requires local Ollama instance)
-- Passage extraction based on semantic similarity
-- Hotspot detection for multi-topic convergence zones
-
-## Requirements
-
-### R Version
-- Code was developed using R version 4.2.2 ("Innocent and Trusting")
-- May require adjustments for other R versions
-
-### Required R Packages
-
-**For Literary Field Dynamics:**
-```r
-Matrix
-igraph
-dbscan
-cluster
-tidyverse
-fields
-ggplot2
-```
-
-**For Community Analysis:**
-```r
-quanteda
-stm
-udpipe
-dplyr
-tidyr
-stringr
-tokenizers
-httr
-jsonlite
-ggplot2
-```
-
-### Additional Requirements
-
-**For LLM topic naming (optional):**
-- Local Ollama installation with embedding model
-- Default model: `pankajrajdeo/sentence-transformers_all-minilm-l6-v2`
-- Can be disabled by setting `USE_LLM_NAMING <- FALSE`
-
-## Data Requirements
-
-Both scripts require pre-processed input data from preparatory analyses. The following objects must be prepared:
-
-### For Literary Field Dynamics:
-- `adj_matrix`: Adjacency matrix of cosine similarities between texts
-- `centrality_measures`: Data frame with eigenvector centrality scores
-- `result_dfr`: Data frame with semantic disruption scores  
-- `metadata`: Data frame linking text titles to short names
-- `corpus_sub_sub`: Corpus object containing the texts
-
-### For Community Analysis:
-- `corpus_sub_sub`: Corpus object with all texts
-- Pre-computed sentence embeddings for all chunks (in `.RData` format)
-- Chunk IDs and text metadata
-
-**Note:** Code to generate these input objects will be made publicly available when the companion essay is published (exp.2026).
-
-## Usage
-
-### Basic Workflow
-
-1. **Prepare your data** according to the requirements above
-
-2. **Set working directory and parameters** in the script headers:
-```r
-setwd("path/to/your/directory")
-```
-
-3. **Run Literary Field Dynamics** to identify communities:
-```r
-source("Literary_Field_Dynamics_Code.R")
-```
-
-4. **Run Community Analysis** on specific texts:
-```r
-source("Community_Analysis_Code.R")
-```
-
-### Customization
-
-Both scripts include extensive configuration parameters at the top:
-
-**Literary Field Dynamics:**
-- `seed_no` - Random seed for reproducibility
-- Stability analysis iterations
-
-**Community Analysis:**
-- `NUM_TOP_TOPICS_DOC` - Number of top topics to analyze
-- `SPIKE_PERCENTILE` - Threshold for identifying hotspots
-- `AUTO_K_RUN` - Enable/disable automatic K selection
-- `USE_LLM_NAMING` - Enable/disable LLM topic naming
-
-## Output
-
-### Literary Field Dynamics produces:
-- Community assignments for all texts
-- Stability metrics (consistency scores)
-- Network visualization of community structure
-- Community analysis (size, density, influence scores)
-
-### Community Analysis produces:
-- Top topics for target text (ranked by similarity)
-- Representative passages for each topic
-- Convergence hotspots (passages where multiple topics spike)
-- Smoothed visualization of topic profiles across text
-
-## Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@article{hamilton2025consensus,
-  title={Consensus communities: emergent literary communities and the challenge to genre},
-  author={Hamilton, Grant and Sorensen, Eli Park},
-  journal={Digital Scholarship in the Humanities},
-  year={2025},
-  doi={10.1093/llc/fqaf139}
-}
-```
-
-## License
-
-This code is provided under the Creative Commons Attribution License (CC BY 4.0), matching the license of the published article. You are free to use, adapt, and distribute this code for any purpose, provided you give appropriate credit.
-
-## Contact
-
-For questions or issues, please contact:
-- Grant Hamilton: hamilton@cuhk.edu.hk
-- Department of English, Chinese University of Hong Kong
-
-## Acknowledgments
-
-This research was conducted as part of "The African Literary Archive – A Computational Analysis of Literary Influence" (2023–25), funded by Hong Kong's University Grants Committee (UGC) through the General Research Fund (project code: 14614522).
-
-## Notes
-
-- The code prioritizes clarity and reproducibility over computational efficiency
-- Some operations may be time-intensive for large corpora
-- Memory requirements scale with corpus size
-- Parallel processing options are available in STM functions
-
-## Version History
-
-- **Version 1.0** (December 2025): Initial public release accompanying journal publication
-
-
-# Section A. `Literary_Field_Dynamics_Code.R`
 
 # ==============================================================================
+# ==============================================================================
+# SCRIPT A — Literary_Field_Dynamics_Code.R
+# ==============================================================================
+# ==============================================================================
+#
 # Consensus Communities: Emergent Literary Communities and the Challenge to Genre
-# ==============================================================================
-# 
-# This code implements the 'consensus communities' framework described in:
-# Hamilton, G. & Sorensen, E.P. (2025). "Consensus communities: emergent literary 
-# communities and the challenge to genre." Digital Scholarship in the Humanities.
-# https://doi.org/10.1093/llc/fqaf139
 #
-# The framework integrates Louvain community detection with HDBSCAN clustering
-# to identify robust literary communities based purely on textual affinities.
-# This approach enables texts to self-organize independently of traditional
-# taxonomic categories such as genre, period, or style.
+# Implements the consensus communities framework: Louvain community detection
+# combined with HDBSCAN clustering to identify robust literary communities on
+# textual affinities alone, independent of genre, period, or style.
 #
-# Note: This code was written under R version 4.2.2. If you are using a different
-# version, you may need to adjust certain elements to ensure functionality.
-#
-# You are welcome to use or adapt this code for your own projects.
+# Part of the Consensus Communities repository (Hamilton & Sorensen 2025,
+# Digital Scholarship in the Humanities). See the repository header above for
+# the full reference, requirements, and data dependencies.
 # ==============================================================================
 
 # ==============================================================================
@@ -224,14 +245,18 @@ setwd("...") # Set your working directory
 # Set global seed for reproducibility
 seed_no <- 43
 
-# [PLACEHOLDER: The following objects are required inputs from preparatory analysis.
-#  Code to generate these will be made publicly available when the companion
-#  methodological essay is published:
-#  - adj_matrix: Adjacency matrix of cosine similarities between texts
+# The following objects are required inputs. They are produced by the companion
+# methodological pipeline, now published as:
+#   Hamilton, G. & Sorensen, E.P. (2026). "Reconfiguring the ideal order:
+#   ablation and field formation in the twentieth-century Nigerian novel in
+#   English." Digital Humanities Quarterly, 20(1).
+#   https://dhq.digitalhumanities.org/vol/20/1/000858/000858.html
+# Run that repository's pipeline to generate each of the objects below:
+#  - adj_matrix:          Adjacency matrix of cosine similarities between texts
 #  - centrality_measures: Data frame with eigenvector centrality scores
-#  - result_dfr: Data frame with semantic disruption scores
-#  - metadata: Data frame linking text titles to short names
-#  - corpus_sub_sub: Corpus object containing the texts]
+#  - result_dfr:          Data frame with semantic disruption scores
+#  - metadata:            Data frame linking text titles to short names
+#  - corpus_sub_sub:      Corpus object containing the texts
 
 # ==============================================================================
 # SECTION 2: Load Required Libraries
@@ -697,28 +722,22 @@ for(i in seq_along(results$community_analysis)) {
     }
 }
 
-
-# Section B. `Community_Analysis_Code.R`
-
 # ==============================================================================
+# ==============================================================================
+# SCRIPT B — Community_Analysis_Code.R
+# ==============================================================================
+# ==============================================================================
+#
 # Community Concept Analysis Using STM and Pre-computed Embeddings
+#
+# Maps community patterns onto concrete passages: Structural Topic Modelling
+# identifies computational signatures across a literary community, which are
+# then located within a target text using sentence embeddings.
+#
+# Part of the Consensus Communities repository (Hamilton & Sorensen 2025,
+# Digital Scholarship in the Humanities). See the repository header above for
+# the full reference, requirements, and data dependencies.
 # ==============================================================================
-#
-# This code implements the passage-level analysis described in:
-# Hamilton, G. & Sorensen, E.P. (2025). "Consensus communities: emergent literary 
-# communities and the challenge to genre." Digital Scholarship in the Humanities.
-# https://doi.org/10.1093/llc/fqaf139
-#
-# The framework uses Structural Topic Modelling (STM) to identify computational
-# patterns across a literary community, then maps these patterns onto specific
-# passages in a target text using sentence embeddings.
-#
-# Note: This code was written under R version 4.2.2. If you are using a different
-# version, you may need to adjust certain elements to ensure functionality.
-#
-# You are welcome to use or adapt this code for your own projects.
-# ==============================================================================
-
 
 # ==============================================================================
 # SECTION 1: Initial Setup and Configuration
@@ -760,9 +779,10 @@ load_specific_objects <- function(file_path, object_names) {
 
 
 # --- Load Base Corpus ---
-# [PLACEHOLDER: This requires a corpus object from preparatory analysis.
-#  Code to generate this will be made publicly available when the companion
-#  methodological essay is published]
+# This requires the corpus object produced by the companion methodological
+# pipeline, now published as Hamilton & Sorensen (2026), "Reconfiguring the
+# ideal order" (Digital Humanities Quarterly, 20(1); see the repository header
+# for the full reference).
 BASE_CORPUS_FILE <- "path/to/your/corpus.RData"
 load_specific_objects(BASE_CORPUS_FILE, c("corpus_sub_sub"))
 
@@ -840,15 +860,16 @@ library(ggplot2)       # Visualization
 
 cat("\n--- Loading Pre-computed Data ---\n")
 
-# [PLACEHOLDER: The following objects are required from Part 1 analysis.
-#  These contain pre-computed sentence embeddings for all texts in the corpus.
-#  Code to generate these will be made publicly available when the companion
-#  methodological essay is published:
-#  - nigerian_chunk_embeddings_list: Sentence embeddings (nested by chunk)
-#  - nigerian_processed_chunk_ids: Chunk IDs
-#  - nigerian_chunks_df: Data frame with chunk text
+# The following objects hold the pre-computed sentence embeddings for all texts
+# in the corpus. They are produced by the companion methodological pipeline, now
+# published as Hamilton & Sorensen (2026), "Reconfiguring the ideal order"
+# (Digital Humanities Quarterly, 20(1); see the repository header for the full
+# reference):
+#  - nigerian_chunk_embeddings_list:     Sentence embeddings (nested by chunk)
+#  - nigerian_processed_chunk_ids:       Chunk IDs
+#  - nigerian_chunks_df:                 Data frame with chunk text
 #  - non_nigerian_chunk_embeddings_list: Embeddings for comparison texts
-#  - non_nigerian_processed_chunk_ids: Chunk IDs for comparison texts]
+#  - non_nigerian_processed_chunk_ids:   Chunk IDs for comparison texts
 
 if (!file.exists(PART1_RDATA_FILE)) {
   stop("Specified .RData file not found: ", PART1_RDATA_FILE)
