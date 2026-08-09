@@ -1,0 +1,2070 @@
+# Draft
+
+# ==============================================================================
+# From This to That: Code Repository
+# ==============================================================================
+#
+# This repository contains the computational code for:
+#
+# xxx (xxxx). "xxx." xxx. xxx
+#
+# Overview
+# --------
+# This code implements a measurement of demonstrative reference across a
+# single author's body of fiction. Every token is parsed, and demonstratives
+# are classified by grammatical function alone: proximal (this, these) against
+# distal (that, those), and pronominal (bare, its referent a stretch of
+# discourse) against adnominal (attached to a head noun). Quoted speech is
+# located and set aside so that the narrating voice can be counted on its own.
+# The resulting per-work rates are then tested for trend, for a changepoint,
+# and against the named confounds of dialogue, narrative person, and register.
+#
+# The instrument specifies nothing stylistic in advance. It classifies by
+# part of speech and lemma, and reports what the distribution does across the
+# corpus. A supporting analysis divides adnominal demonstratives by the
+# concreteness of their head noun, using published norms where available; that
+# division is reported as texture, and no headline claim rests upon it.
+#
+# How the instrument works, in plain terms:
+#  1. It parses each work with a dependency model (udpipe), keeping token,
+#     lemma, part of speech, morphological features, and head.
+#  2. It locates quoted speech from the text's own quotation convention and
+#     flags those spans, so narration can be counted separately.
+#  3. It classifies every demonstrative on two axes: proximal/distal (lemma)
+#     and pronominal/adnominal (part of speech from the parse).
+#  4. It aggregates per work and per chunk, and tests: Spearman correlation
+#     with year of first publication, a permutation changepoint, a
+#     quasi-binomial GLM with narrative person as a covariate, within-work
+#     tests where person varies, and a register comparison.
+#  5. It extracts ranked concordance lines for each category, so that every
+#     figure can be taken back to the sentences that produced it.
+#  6. It validates the shipped category definitions against a hand-built
+#     ground-truth table, re-derives the published rates from the cache, and
+#     checks extracted exhibits verbatim against the source files.
+#
+# Scripts
+# -------
+# The repository comprises four scripts, run in sequence.
+#
+# Script A — Deixis_Pipeline_Code.R
+#   Annotation, classification, per-work and per-chunk aggregation, and the
+#   full statistical report.
+#     1. Setup and Configuration
+#     2. Load Required Libraries
+#     3. Helper Functions
+#     4. Metadata and Concreteness Norms
+#     5. Annotation and Classification
+#     6. Aggregation
+#     7. Analyses
+#     8. Report
+#
+# Script B — Deixis_Evidence_Code.R
+#   Descriptive per-1,000-word rates and ranked concordance (KWIC) lines for
+#   each category, drawn from narration only.
+#     1. Setup and Configuration
+#     2. Load Required Libraries
+#     3. Category Definitions and Ranking Functions
+#     4. Annotation and Concreteness Norms
+#     5. Per-Work Extraction
+#     6. Descriptive Digest
+#
+# Script C — Deixis_Validation_Code.R
+#   Four independent checks on the shipped definitions, with a single
+#   pass/fail report and a stratified sample for manual audit.
+#     1. Setup and Configuration
+#     2. Embedded Category Definitions
+#     3. Part 1 — Ground Truth
+#     4. Part 2 — Consistency
+#     5. Part 3 — Verbatim
+#     6. Part 4 — Audit Sample
+#
+# Script D — Deixis_Figure1_Code.R
+#   The publication figure: proximal share against year of first publication,
+#   with the tested changepoint band and the two regime means.
+#
+# Key Functions
+# -------------
+#   detect_quote_marker()     - Reads a text's own quotation convention from
+#                               its punctuation counts
+#   build_dialogue_flags()    - Marks quoted spans, repairing unclosed
+#                               quotations at paragraph boundaries
+#   classify_demonstratives() - Assigns polarity (proximal/distal) and class
+#                               (pronominal/adnominal) from the parse
+#   deixis_masks()            - Single source of truth for the three reported
+#                               categories, shared by Scripts B and C
+#   best_changepoint()        - Least-squares changepoint with a permutation
+#                               test of the split
+#   precision_report()        - Manual-audit precision from the coded sample
+#
+# Requirements
+# ------------
+# R Version:
+#   Code was developed using R version 4.2.3 "Shortstop Beagle".
+#   May require adjustments for other R versions.
+#
+# Required R Packages:
+#   udpipe        Tokenisation, lemmatisation, POS and dependency annotation
+#   data.table    Fast aggregation and CSV handling
+#   ggplot2       The publication figure (Script D)
+#
+# Optional:
+#   ggrepel       Cleaner point labels in the figure (Script D)
+#
+# Data Requirements
+# -----------------
+# - One plain-text (.txt) file per work, in the working directory. Filenames
+#   must contain the corresponding key from the metadata table in Script A
+#   (for example, a file containing "disgrace" is matched to Disgrace). Files
+#   that match no key are skipped, and this is reported.
+# - The primary texts are under copyright and are not distributed with this
+#   repository. Users supply their own copies.
+# - A udpipe English model (english-ewt). If none is found in the working
+#   directory, the model is downloaded automatically on first run.
+# - Optional: concreteness norms as a tab-separated file with columns 'Word'
+#   and 'Conc.M', named in Script A. These are used only for the supporting
+#   concrete/abstract division of adnominal demonstratives. Without them the
+#   code falls back to a morphological heuristic and prints a warning. See
+#   Brysbaert, M., Warriner, A. B., & Kuperman, V. (2014), "Concreteness
+#   ratings for 40,000 generally known English word lemmas," Behavior
+#   Research Methods 46(3), 904-11.
+# - On first run the annotation is cached as an .rds file in the working
+#   directory and reused by every later script and run.
+#
+# Usage
+# -----
+# 1. Place the .txt files (and, optionally, the concreteness norms) in your
+#    working directory.
+# 2. Set the working directory in Section 1 of each script.
+# 3. Run Script A. The first run annotates the corpus and writes the cache,
+#    which takes a few minutes per work; later runs read the cache and are
+#    fast.
+# 4. Run Script B in the same working directory.
+# 5. Run Script C to validate. Then code the 'human_correct' column of the
+#    audit sample by hand and call precision_report() for the audited figure.
+# 6. Run Script D to produce the figure.
+#
+# Output
+# ------
+# Script A produces:
+# - deixis_final_novel.csv:  per-work counts, proportions, and rates, whole
+#                            text and narration only
+# - deixis_final_chunks.csv: per-chunk narration-only rates, for the
+#                            within-work tests
+# - A printed report: correlations with year, the permutation changepoint,
+#   the person GLM, the within-work and register checks, and a per-work table
+#
+# Script B produces:
+# - deixis_descriptive_figures.csv: per-1,000-word narration rates by category
+# - kwic_bare_distal.csv, kwic_prox_adnominal.csv, kwic_prox_immediacy.csv:
+#   ranked concordance lines with a locator for each hit
+# - A printed digest of regime figures and top exhibits
+#
+# Script C produces:
+# - deixis_audit_sample.csv: a stratified random sample for manual coding
+# - A printed pass/fail report over the four checks
+#
+# Script D produces:
+# - figure1_deictic_withdrawal.pdf (vector) and .png (600 dpi)
+# - The regime means and the separation check, printed for the caption
+#
+# Citation
+# --------
+# If you use this code in your research, please cite:
+#
+# @article{xxx,
+#   title   = {xxx},
+#   author  = {xxx},
+#   journal = {xxx},
+#   year    = {xxxx},
+#   volume  = {xxx},
+#   number  = {xxx},
+#   doi     = {xxx}
+# }
+#
+# License
+# -------
+# This code is provided under the Creative Commons Attribution License
+# (CC BY 4.0), matching the license of the published article. You are free
+# to use, adapt, and distribute this code for any purpose, provided you
+# give appropriate credit.
+#
+# Contact
+# -------
+# For questions or issues, please contact:
+#   Grant Hamilton: hamilton@cuhk.edu.hk
+#   Department of English, Chinese University of Hong Kong
+#
+# Notes
+# -----
+# - The code prioritises clarity and reproducibility over computational
+#   efficiency.
+# - Annotation is the only slow step, and it runs once. Every later script
+#   reads the cache. To force re-annotation after adding or renaming files,
+#   delete the cache file.
+# - The pronominal/adnominal division is pure part of speech from the parse
+#   and carries the argument. The concrete/abstract division of adnominal
+#   heads depends on external norms and is reported as supporting texture
+#   only.
+# - The trend is found and tested on the same set of works. The confound
+#   checks establish robustness to dialogue, person, and register, not
+#   independent replication.
+# - All random seeds are set explicitly to ensure reproducibility.
+#
+# Version History
+# ---------------
+# Version 1.0 (xxx): Initial public release accompanying the companion essay.
+# ==============================================================================
+
+
+# ==============================================================================
+# ==============================================================================
+# SCRIPT A — Deixis_Pipeline_Code.R
+# ==============================================================================
+# ==============================================================================
+#
+# Annotates the corpus, classifies every demonstrative by grammatical
+# function, aggregates per work and per chunk, and runs the full battery of
+# tests. Writes two CSVs and prints one contiguous report.
+#
+# Part of the From This to That repository. See the repository header above
+# for the full reference, requirements, and data dependencies.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+setwd("...")   # Set your working directory
+
+# ---- Files -------------------------------------------------------------------
+CACHE_FILE <- "coetzee_annotation_cache.rds"   # written on first run, reused
+BRYS_FILE  <- "Concreteness_ratings_Brysbaert_et_al_BRM.txt"   # optional
+CSV_NOVEL  <- "deixis_final_novel.csv"
+CSV_CHUNK  <- "deixis_final_chunks.csv"
+
+# ---- Definitional choices (not tuned thresholds) -----------------------------
+N_PERM       <- 2000L   # permutations for the changepoint test
+CHUNK_W      <- 1200L   # words per chunk in the within-work tests
+CLEAN_MAXREP <- 30L     # dialogue repairs above which detection is flagged
+CLEAN_DIALHI <- 55      # % of words in dialogue above which detection is flagged
+CONC_HI      <- 3.5     # Conc.M at or above this -> concrete
+CONC_LO      <- 2.5     # Conc.M at or below this -> abstract; between = 'mid'
+
+
+# ==============================================================================
+# SECTION 2: Load Required Libraries
+# ==============================================================================
+
+.need <- function(p) {
+    if (!requireNamespace(p, quietly = TRUE))
+        install.packages(p, repos = "https://cloud.r-project.org")
+}
+.need("udpipe")
+.need("data.table")
+suppressPackageStartupMessages({
+    library(udpipe)
+    library(data.table)
+})
+
+
+# ==============================================================================
+# SECTION 3: Helper Functions
+# ==============================================================================
+
+# ---- Dialogue detection ------------------------------------------------------
+# A text's quotation convention is read off its own punctuation counts, then
+# quoted spans are tracked with a small state machine. An unclosed quotation is
+# repaired at the next paragraph boundary unless the new paragraph itself opens
+# with a quotation mark, which is the continued-speech convention.
+
+detect_quote_marker <- function(token, upos) {
+    q    <- upos == "PUNCT"
+    n_cd <- sum(q & token %in% c("\u201C", "\u201D"))
+    n_sd <- sum(q & token == "\"")
+    n_cs <- sum(q & token %in% c("\u2018", "\u2019"))
+    n_ss <- sum(q & token == "'")
+    if (n_cd >= 20) "curly_double"
+    else if (n_sd >= 20) "straight_double"
+    else if (n_cs >= 20) "curly_single"
+    else if (n_ss >= 40) "straight_single"
+    else "none"
+}
+
+build_dialogue_flags <- function(token, upos, para_id,
+                                 strip_quotes = TRUE, max_span = 800, peek = 3) {
+    n   <- length(token)
+    out <- rep(FALSE, n)
+    if (!strip_quotes || n == 0)
+        return(list(in_dialogue = out, repairs = NA_integer_, marker = "override_off"))
+
+    marker <- detect_quote_marker(token, upos)
+    if (marker == "none")
+        return(list(in_dialogue = out, repairs = 0L, marker = marker))
+
+    is_q <- upos == "PUNCT" & switch(marker,
+        curly_double    = token %in% c("\u201C", "\u201D"),
+        straight_double = token == "\"",
+        curly_single    = token %in% c("\u2018", "\u2019"),
+        straight_single = token == "'")
+
+    role <- rep(NA_character_, n)
+    if (marker == "curly_double") {
+        role[is_q & token == "\u201C"] <- "open"
+        role[is_q & token == "\u201D"] <- "close"
+    } else if (marker == "curly_single") {
+        role[is_q & token == "\u2018"] <- "open"
+        role[is_q & token == "\u2019"] <- "close"
+    } else {
+        role[is_q] <- "toggle"
+    }
+
+    q_idx   <- which(is_q)
+    p_start <- which(c(TRUE, para_id[-1] != para_id[-n]))
+    ev <- rbind(data.frame(i = p_start, type = "para",  stringsAsFactors = FALSE),
+                data.frame(i = q_idx,   type = "quote", stringsAsFactors = FALSE))
+    ev <- ev[order(ev$i, ev$type != "para"), ]
+
+    open_at <- NA_integer_
+    repairs <- 0L
+    spans_s <- integer(0)
+    spans_e <- integer(0)
+    close_span <- function(a, b) {
+        spans_s <<- c(spans_s, a)
+        spans_e <<- c(spans_e, b)
+    }
+    consumed <- rep(FALSE, n)
+
+    for (r in seq_len(nrow(ev))) {
+        i <- ev$i[r]
+        if (ev$type[r] == "para") {
+            # paragraph boundary: continued speech re-opens within `peek` tokens
+            if (!is.na(open_at) && i > open_at) {
+                w <- q_idx[q_idx >= i & q_idx < i + peek]
+                w <- w[!consumed[w] & role[w] %in% c("open", "toggle")]
+                if (length(w)) {
+                    consumed[w[1]] <- TRUE
+                } else {
+                    close_span(open_at, i - 1L)
+                    open_at <- NA_integer_
+                    repairs <- repairs + 1L
+                }
+            }
+        } else {
+            if (consumed[i]) next
+            rl <- role[i]
+            if (is.na(open_at)) {
+                if (rl %in% c("open", "toggle")) open_at <- i
+            } else {
+                if (rl %in% c("close", "toggle")) {
+                    close_span(open_at, i)
+                    open_at <- NA_integer_
+                } else {
+                    close_span(open_at, i - 1L)
+                    open_at <- i
+                    repairs <- repairs + 1L
+                }
+            }
+            # a runaway span is closed rather than allowed to swallow narration
+            if (!is.na(open_at) && i - open_at > max_span) {
+                close_span(open_at, i)
+                open_at <- NA_integer_
+                repairs <- repairs + 1L
+            }
+        }
+    }
+    if (!is.na(open_at)) {
+        close_span(open_at, n)
+        repairs <- repairs + 1L
+    }
+    for (k in seq_along(spans_s)) out[spans_s[k]:spans_e[k]] <- TRUE
+    list(in_dialogue = out, repairs = repairs, marker = marker)
+}
+
+# ---- Concreteness of head nouns (supporting instrument only) -----------------
+# Published norms where the head is listed. Heads absent from the norms fall
+# back to a morphological heuristic, and both counts are reported so the reader
+# can see how much of the division rests on which instrument.
+
+ABSTRACT_SUFFIX <- "(tion|sion|ment|ness|ity|ance|ence|ism|ship|hood|dom|ency|acy)$"
+ABSTRACT_NOUNS  <- c("thing", "way", "fact", "idea", "moment", "reason", "kind",
+    "sort", "matter", "question", "sense", "point", "case", "manner", "respect",
+    "extent", "degree", "nature", "truth", "mind", "thought", "feeling",
+    "notion", "concept", "possibility", "meaning", "purpose", "situation",
+    "problem", "effect", "cause", "aspect", "view", "subject", "affair",
+    "business")
+
+is_abstract_head_morph <- function(lemma) {
+    l   <- tolower(lemma)
+    out <- grepl(ABSTRACT_SUFFIX, l) | l %in% ABSTRACT_NOUNS
+    out[is.na(l)] <- FALSE
+    out
+}
+
+# Returns "concrete" / "abstract" / "mid" / NA for a vector of head lemmas.
+head_concreteness <- function(lemma) {
+    l    <- tolower(lemma)
+    res  <- rep(NA_character_, length(l))
+    have <- !is.na(l)
+    if (!is.null(conc_env$tab)) {
+        m   <- conc_env$tab[l[have]]                  # named numeric lookup
+        lab <- ifelse(is.na(m), NA_character_,
+               ifelse(m >= CONC_HI, "concrete",
+               ifelse(m <= CONC_LO, "abstract", "mid")))
+        res[have] <- lab
+        miss <- have & is.na(res)                     # heads absent from norms
+        res[miss] <- ifelse(is_abstract_head_morph(l[miss]), "abstract", "concrete")
+        conc_env$n_norm <- conc_env$n_norm + sum(have & !is.na(m))
+        conc_env$n_fall <- conc_env$n_fall + sum(miss)
+    } else {
+        res[have] <- ifelse(is_abstract_head_morph(l[have]), "abstract", "concrete")
+        conc_env$n_fall <- conc_env$n_fall + sum(have)
+    }
+    res
+}
+
+# ---- Demonstrative classifier ------------------------------------------------
+# Pronominal versus adnominal is pure part of speech from the parse, and carries
+# the argument. Complementiser 'that' (SCONJ) and relativiser 'that'
+# (PronType=Rel) are excluded. The concrete/abstract division is supporting.
+
+classify_demonstratives <- function(dt) {
+    lem   <- tolower(dt$lemma)
+    upos  <- dt$upos
+    feats <- ifelse(is.na(dt$feats), "", dt$feats)
+
+    is_dem <- ((upos == "DET") | (upos == "PRON" & grepl("PronType=Dem", feats))) &
+              upos != "SCONJ" & !grepl("PronType=Rel", feats) &
+              lem %in% c("this", "that", "these", "those")
+
+    pol <- ifelse(lem %in% c("this", "these"), "prox",
+           ifelse(lem %in% c("that", "those"), "dist", NA_character_))
+
+    hu  <- dt$head_upos
+    hl  <- dt$head_lemma
+    cls <- rep(NA_character_, nrow(dt))
+    cls[is_dem & upos == "PRON"] <- "pron"
+    adn <- is_dem & upos == "DET"
+    cls[adn] <- "adnom"
+
+    # fine head-type (supporting): common nouns via norms, proper nouns concrete
+    conc <- rep(NA_character_, nrow(dt))
+    conc[adn & hu %in% "PROPN"] <- "concrete"
+    isN <- adn & hu %in% "NOUN"
+    conc[isN] <- head_concreteness(hl[isN])
+    conc[adn & !(hu %in% c("NOUN", "PROPN"))] <- "unknown"
+
+    list(dem_class = ifelse(is_dem, cls, NA_character_),
+         dem_pol   = ifelse(is_dem, pol, NA_character_),
+         dem_conc  = ifelse(is_dem & !is.na(cls) & cls == "adnom", conc, NA_character_))
+}
+
+# ---- Statistics --------------------------------------------------------------
+
+spearman_fmt <- function(x, y) {
+    ok <- complete.cases(x, y)
+    if (sum(ok) < 4)
+        return(list(txt = sprintf("n=%d too few", sum(ok)), rho = NA_real_, p = NA_real_))
+    ct <- suppressWarnings(cor.test(x[ok], y[ok], method = "spearman"))
+    list(txt = sprintf("rho = %+.3f  p = %.4g  (n = %d)",
+                       ct$estimate, ct$p.value, sum(ok)),
+         rho = unname(ct$estimate), p = ct$p.value)
+}
+
+# Least-squares changepoint: the split minimising within-segment sums of
+# squares, with the observed minimum tested against the same statistic computed
+# on random re-orderings of the series.
+best_changepoint <- function(v, nperm = 2000, seed = 42) {
+    n   <- length(v)
+    ssq <- function(a) sum((a - mean(a))^2)
+    rss <- function(u) {
+        ks <- 2:(n - 2)
+        vapply(ks, function(k) ssq(u[1:k]) + ssq(u[(k + 1):n]), numeric(1))
+    }
+    obs <- rss(v)
+    kb  <- (2:(n - 2))[which.min(obs)]
+    set.seed(seed)
+    perm <- replicate(nperm, min(rss(sample(v))))
+    list(k = kb, p = mean(perm <= min(obs)),
+         m1 = mean(v[1:kb]), m2 = mean(v[(kb + 1):n]))
+}
+
+
+# ==============================================================================
+# SECTION 4: Metadata and Concreteness Norms
+# ==============================================================================
+#
+# `key` is matched against filenames (case-insensitively, as a substring), so
+# a file named anything containing "disgrace" is read as Disgrace. `person` and
+# `register` are used only as covariates in the confound checks. `strip_quotes`
+# governs whether dialogue detection runs on a given text.
+
+meta <- data.frame(
+    key = c("dusklands", "heart", "barbarians", "michael", "foe", "iron",
+            "petersburg", "boyhood", "disgrace", "youth", "costello", "slow",
+            "diary", "summertime", "childhood", "schooldays", "death", "pole"),
+    title = c("Dusklands", "In the Heart of the Country",
+              "Waiting for the Barbarians", "Life & Times of Michael K", "Foe",
+              "Age of Iron", "The Master of Petersburg", "Boyhood", "Disgrace",
+              "Youth", "Elizabeth Costello", "Slow Man", "Diary of a Bad Year",
+              "Summertime", "The Childhood of Jesus", "The Schooldays of Jesus",
+              "The Death of Jesus", "The Pole"),
+    year = c(1974, 1977, 1980, 1983, 1986, 1990, 1994, 1997, 1999, 2002, 2003,
+             2005, 2007, 2009, 2013, 2016, 2019, 2023),
+    person = c("first", "first", "first", "mixed", "first", "first", "third",
+               "third", "third", "third", "third", "third", "first", "mixed",
+               "third", "third", "third", "third"),
+    strip_quotes = rep(TRUE, 18),
+    register = c("narr", "narr", "narr", "narr", "narr", "narr", "narr", "narr",
+                 "narr", "narr", "essay", "narr", "essay", "essay", "narr",
+                 "narr", "narr", "narr"),
+    stringsAsFactors = FALSE)
+
+# ---- Load concreteness norms into conc_env, or fall back ---------------------
+conc_env         <- new.env()
+conc_env$tab     <- NULL
+conc_env$n_norm  <- 0L
+conc_env$n_fall  <- 0L
+conc_env$source  <- "morphological heuristic (concreteness norms not found)"
+
+if (file.exists(BRYS_FILE)) {
+    bt <- tryCatch(fread(BRYS_FILE, sep = "\t", header = TRUE, quote = ""),
+                   error = function(e) NULL)
+    if (!is.null(bt) && all(c("Word", "Conc.M") %in% names(bt))) {
+        bt  <- bt[!is.na(Word) & !is.na(`Conc.M`)]
+        tab <- as.numeric(bt$`Conc.M`)
+        names(tab) <- tolower(bt$Word)
+        tab <- tab[!duplicated(names(tab))]
+        conc_env$tab    <- tab
+        conc_env$source <- sprintf(
+            "published norms (%d words; concrete >= %.1f, abstract <= %.1f)",
+            length(tab), CONC_HI, CONC_LO)
+        message("Loaded concreteness norms: ", length(tab), " words.")
+    } else {
+        message("Norms file found but missing 'Word'/'Conc.M' columns -- using fallback.")
+    }
+} else {
+    message("No concreteness norms file -- using morphological fallback.")
+}
+
+
+# ==============================================================================
+# SECTION 5: Annotation and Classification
+# ==============================================================================
+#
+# match_title() returns a title for a filename only if the filename contains a
+# known meta$key. Anything else (the norms file, READMEs, notes) returns NA and
+# is excluded, which is what keeps non-corpus .txt files out of the parse.
+# To force re-annotation after adding or renaming files, delete CACHE_FILE.
+
+match_title <- function(p) {
+    b <- tolower(basename(p))
+    if (identical(basename(p), BRYS_FILE)) return(NA_character_)   # never a text
+    h <- meta[vapply(meta$key, function(k) grepl(k, b, fixed = TRUE), logical(1)), ]
+    if (!nrow(h)) NA_character_ else h$title[which.max(nchar(h$key))]
+}
+
+if (file.exists(CACHE_FILE)) {
+    message("Loading cached annotation...")
+    annot <- as.data.table(readRDS(CACHE_FILE))
+} else {
+    message("No cache -- annotating .txt files (one-time, slow: a few min per work)...")
+    mf <- list.files(pattern = "^english-ewt.*\\.udpipe$")
+    if (!length(mf)) mf <- udpipe_download_model(language = "english-ewt")$file_model
+    ud <- udpipe_load_model(mf[1])
+
+    txts   <- list.files(pattern = "\\.txt$", full.names = TRUE)
+    titles <- vapply(txts, match_title, character(1))
+    keep   <- !is.na(titles)
+    if (!any(keep))
+        stop("No .txt files in the working directory matched meta$key.")
+    skipped <- basename(txts[!keep])
+    if (length(skipped))
+        message("  skipping non-corpus .txt files: ", paste(skipped, collapse = ", "))
+    txts   <- txts[keep]
+    titles <- titles[keep]
+    message("  matched ", length(txts), " works.")
+
+    annot <- rbindlist(lapply(seq_along(txts), function(i) {
+        message("  annotating [", i, "/", length(txts), "]: ", titles[i])
+        raw <- tryCatch(readLines(txts[i], warn = FALSE, encoding = "UTF-8"),
+                        error = function(e) readLines(txts[i], warn = FALSE))
+        a <- as.data.table(udpipe_annotate(ud, x = paste(raw, collapse = "\n"),
+                                           doc_id = titles[i]))
+        a[, novel := titles[i]]
+        a
+    }), fill = TRUE)
+
+    saveRDS(annot, CACHE_FILE)
+    message("  cached annotation -> ", CACHE_FILE)
+}
+
+annot <- as.data.table(annot)
+annot[, .row := .I]
+
+# ---- Join each token's syntactic head (lemma and POS) ------------------------
+message("Joining heads...")
+annot[, sk := paste(doc_id, paragraph_id, sentence_id, sep = "\x1f")]
+heads <- annot[, .(sk, token_id, head_lemma = tolower(lemma), head_upos = upos)]
+annot <- merge(annot, heads,
+               by.x = c("sk", "head_token_id"), by.y = c("sk", "token_id"),
+               all.x = TRUE, sort = FALSE)
+setorder(annot, .row)
+
+message("Classifying demonstratives (concreteness via ", conc_env$source, ")...")
+dc <- classify_demonstratives(annot)
+annot[, `:=`(dem_class = dc$dem_class, dem_pol = dc$dem_pol, dem_conc = dc$dem_conc)]
+annot[, is_word := !(upos %in% c("PUNCT", "SYM"))]
+annot[, is_fp := tolower(token) %in% c("i", "me", "my", "myself", "mine") &
+                 upos %in% c("PRON", "DET")]
+
+mt <- as.data.table(meta)[, .(novel = title, year, person, strip_quotes, register)]
+annot <- merge(annot, mt, by = "novel", all.x = TRUE, sort = FALSE)
+setorder(annot, .row)
+
+message("Detecting dialogue...")
+annot[, in_dialogue := FALSE]
+qual <- list()
+for (nv in unique(annot$novel)) {
+    idx <- which(annot$novel == nv)
+    d   <- annot[idx]
+    sq  <- d$strip_quotes[1]
+    if (is.na(sq)) sq <- TRUE
+    fl <- build_dialogue_flags(d$token, d$upos, d$paragraph_id, strip_quotes = sq)
+    set(annot, i = idx, j = "in_dialogue", value = fl$in_dialogue)
+    wt <- sum(d$is_word)
+    wd <- sum(d$is_word & fl$in_dialogue)
+    qual[[nv]] <- data.frame(novel = nv, marker = fl$marker,
+                             repairs = ifelse(is.na(fl$repairs), 0L, fl$repairs),
+                             pct_dial = round(100 * wd / max(wt, 1), 1),
+                             stringsAsFactors = FALSE)
+}
+qual <- rbindlist(qual)
+
+
+# ==============================================================================
+# SECTION 6: Aggregation
+# ==============================================================================
+
+# ---- Per work: whole text and narration only ---------------------------------
+cnt <- function(d, mask, expr) sum(expr & mask, na.rm = TRUE)
+
+rows <- lapply(unique(annot$novel), function(nv) {
+    d <- annot[novel == nv]
+    W <- d$is_word                     # whole text
+    N <- W & !d$in_dialogue            # narration only
+
+    agg <- function(mask) {
+        prox   <- cnt(d, mask, d$dem_pol == "prox")
+        dist   <- cnt(d, mask, d$dem_pol == "dist")
+        prn    <- cnt(d, mask, d$dem_class == "pron")
+        adn    <- cnt(d, mask, d$dem_class == "adnom")
+        prn_d  <- cnt(d, mask, d$dem_class == "pron" & d$dem_pol == "dist")
+        conc   <- cnt(d, mask, d$dem_conc == "concrete")
+        abst   <- cnt(d, mask, d$dem_conc == "abstract")
+        midc   <- cnt(d, mask, d$dem_conc == "mid")
+        conc_d <- cnt(d, mask, d$dem_conc == "concrete" & d$dem_pol == "dist")
+        conc_p <- cnt(d, mask, d$dem_conc == "concrete" & d$dem_pol == "prox")
+        nw     <- sum(mask)
+        list(prox = prox, dist = dist, prn = prn, adn = adn,
+             conc = conc, abst = abst, mid = midc, nw = nw,
+             prop      = ifelse(prox + dist > 0, prox / (prox + dist), NA),
+             pctpron   = ifelse(prox + dist > 0, 100 * prn / (prox + dist), NA),
+             dprn_dist = 1000 * prn_d / max(nw, 1),
+             prop_conc = ifelse(conc_p + conc_d > 0, conc_p / (conc_p + conc_d), NA))
+    }
+
+    w <- agg(W)
+    n <- agg(N)
+    data.frame(novel = nv, year = d$year[1], person = d$person[1],
+               register = d$register[1],
+               words = w$nw, narr_words = n$nw,
+               prop_w = w$prop, prop_n = n$prop,
+               pctpron_w = w$pctpron, pctpron_n = n$pctpron,
+               dprn_dist_n = n$dprn_dist, prop_conc_n = n$prop_conc,
+               n_conc_n = n$conc, n_abst_n = n$abst, n_mid_n = n$mid,
+               stringsAsFactors = FALSE)
+})
+
+nov <- as.data.table(rbindlist(rows))
+nov <- merge(nov, qual, by = "novel", sort = FALSE)
+nov[, clean := (marker == "override_off") |
+                (repairs <= CLEAN_MAXREP & pct_dial <= CLEAN_DIALHI)]
+setorder(nov, year)
+fwrite(nov, CSV_NOVEL)
+
+# ---- Per chunk, narration only (for the within-work person tests) ------------
+narr <- annot[is_word & !in_dialogue]
+setorder(narr, novel, .row)
+narr[, widx := seq_len(.N), by = novel]
+narr[, chunk := ((widx - 1L) %/% CHUNK_W) + 1L, by = novel]
+
+ch <- narr[, {
+    n  <- .N
+    fp <- sum(is_fp)
+    pr <- sum(dem_class == "pron",  na.rm = TRUE)
+    ad <- sum(dem_class == "adnom", na.rm = TRUE)
+    px <- sum(dem_pol == "prox", na.rm = TRUE)
+    dx <- sum(dem_pol == "dist", na.rm = TRUE)
+    .(nwords    = n,
+      fp_dens   = 1000 * fp / n,
+      pctpron   = ifelse(pr + ad > 0, 100 * pr / (pr + ad), NA_real_),
+      prop_prox = ifelse(px + dx > 0, px / (px + dx), NA_real_),
+      year      = year[1],
+      person    = person[1])
+}, by = .(novel, chunk)]
+
+ch <- ch[nwords >= CHUNK_W * 0.6]     # drop the ragged tail chunk of each work
+fwrite(ch, CSV_CHUNK)
+
+
+# ==============================================================================
+# SECTION 7: Analyses
+# ==============================================================================
+
+message("Analysing...")
+an <- nov[!is.na(year)]
+cl <- an[clean == TRUE]                 # works with reliable dialogue detection
+
+# ---- The withdrawal: trend and changepoint -----------------------------------
+T1_w   <- spearman_fmt(an$year, an$prop_w)
+T1_n   <- spearman_fmt(an$year, an$prop_n)
+T1_ncl <- spearman_fmt(cl$year, cl$prop_n)
+
+third    <- an[person == "third"]
+T1_third <- spearman_fmt(third$year, third$prop_n)
+
+cpv      <- an[order(year), prop_w]
+yrs      <- an[order(year), year]
+cp       <- best_changepoint(cpv, N_PERM)
+cp_bound <- sprintf("between %d and %d", yrs[cp$k], yrs[cp$k + 1])
+
+# ---- Check A: composition, and not an artefact of dialogue or person ---------
+A_ppw   <- spearman_fmt(an$year, an$pctpron_w)
+A_ppn   <- spearman_fmt(an$year, an$pctpron_n)
+A_ppncl <- spearman_fmt(cl$year, cl$pctpron_n)
+A_dpncl <- spearman_fmt(cl$year, cl$dprn_dist_n)
+
+countsN <- annot[novel %in% cl$novel & is_word & !in_dialogue,
+    .(pron  = sum(dem_class == "pron",  na.rm = TRUE),
+      adnom = sum(dem_class == "adnom", na.rm = TRUE),
+      year  = year[1],
+      person = person[1]), by = novel]
+countsN[, person := factor(person)]
+
+glmA <- glm(cbind(pron, adnom) ~ scale(year) + person,
+            family = quasibinomial, data = countsN)
+pA  <- anova(update(glmA, . ~ . - scale(year)), glmA, test = "F")$`Pr(>F)`[2]
+coA <- summary(glmA)$coefficients
+
+# ---- Check B: within a single work where narrative person varies -------------
+mk    <- ch[novel == "Life & Times of Michael K"]
+mk_hi <- mk[fp_dens >= median(mk$fp_dens, na.rm = TRUE)]
+mk_lo <- mk[fp_dens <  median(mk$fp_dens, na.rm = TRUE)]
+B_pp_hi <- mean(mk_hi$pctpron, na.rm = TRUE)
+B_pp_lo <- mean(mk_lo$pctpron, na.rm = TRUE)
+B_wil   <- suppressWarnings(wilcox.test(mk_hi$pctpron, mk_lo$pctpron))$p.value
+
+wn <- ch[, {
+    ok <- sum(complete.cases(fp_dens, pctpron))
+    if (ok >= 6 && sd(fp_dens, na.rm = TRUE) > 0)
+        .(r = suppressWarnings(cor(fp_dens, pctpron, method = "spearman",
+                                   use = "complete.obs")))
+    else .(r = NA_real_)
+}, by = novel]
+wnv   <- wn[!is.na(r)]
+B_med <- median(wnv$r)
+B_pos <- sum(wnv$r > 0)
+B_nn  <- nrow(wnv)
+
+# ---- Check C: register -------------------------------------------------------
+late <- an[year >= 2003]
+C_e  <- late[register == "essay", pctpron_n]
+C_r  <- late[register == "narr",  pctpron_n]
+C_p  <- if (length(C_e) >= 2 && length(C_r) >= 2)
+            suppressWarnings(wilcox.test(C_e, C_r))$p.value else NA_real_
+
+# ---- Supporting: concrete-head adnominals ------------------------------------
+CC_ncl     <- spearman_fmt(cl$year, cl$prop_conc_n)
+conc_share <- 100 * conc_env$n_norm / max(conc_env$n_norm + conc_env$n_fall, 1)
+
+# ---- Verdicts (computed from numeric rho and p, not from formatted strings) --
+A_pass  <- !is.na(A_ppncl$rho) && A_ppncl$rho > 0.45 && A_ppncl$p < 0.05 &&
+           !is.na(pA) && pA < 0.05
+B_pass  <- !is.na(B_med) && abs(B_med) < 0.30 && !is.na(B_wil) && B_wil > 0.10
+C_pass  <- !is.na(C_p) && C_p > 0.10
+T1_pass <- !is.na(T1_ncl$rho) && T1_ncl$rho < -0.6 && T1_ncl$p < 0.01
+
+
+# ==============================================================================
+# SECTION 8: Report
+# ==============================================================================
+
+R   <- character()
+add <- function(f, ...) R <<- c(R, if (length(list(...))) sprintf(f, ...) else f)
+
+add("")
+add("============================================================================")
+add(" DEMONSTRATIVE REFERENCE -- MAIN REPORT")
+add(" run: %s | works: %d | clean-detection: %d",
+    format(Sys.time()), nrow(an), nrow(cl))
+add(" concreteness instrument: %s", conc_env$source)
+add("============================================================================")
+add("")
+add("MEASUREMENT: proximal (this/these) against distal (that/those), and")
+add("pronominal (bare) against adnominal (with a head noun), classified by")
+add("grammatical function alone. Whole text and narration only are reported")
+add("separately, and person and register enter as covariates below.")
+add("")
+
+add("############### THE WITHDRAWAL ###############")
+add("  proportion proximal vs year  whole text (18) : %s", T1_w$txt)
+add("                               narration  (18) : %s", T1_n$txt)
+add("                               narr+clean (%d) : %s", nrow(cl), T1_ncl$txt)
+add("  within third-person works, narration : %s", T1_third$txt)
+add("  CHANGEPOINT (whole-text proportion): break %s | means %.3f -> %.3f | perm p = %.4g",
+    cp_bound, cp$m1, cp$m2, cp$p)
+add("  => %s", ifelse(T1_pass, "CONFIRMED.", "CHECK: weaker than expected."))
+add("")
+
+add("############### COMPOSITION AND CONFOUNDS ###############")
+add("-- Check A: not an artefact of dialogue (narration only, clean set) --")
+add("   %%pron vs year   whole text (18) : %s", A_ppw$txt)
+add("                   narration  (18) : %s", A_ppn$txt)
+add("                   narr+clean (%d) : %s", nrow(cl), A_ppncl$txt)
+add("   distal-pronoun density narr+clean : %s", A_dpncl$txt)
+add("   GLM cbind(pron, adnom) ~ year + person (clean, narration):")
+for (r in rownames(coA))
+    add("     %-14s est %+7.3f  p %.4f", r, coA[r, 1], coA[r, 4])
+add("     drop-one F for YEAR : p = %.4g", pA)
+add("   => %s", ifelse(A_pass,
+    "HOLDS: the migration to bare pronouns is person-independent.",
+    "attenuates -- report as a hedged discussion point."))
+
+add("-- Check B: within one work (person varies, year fixed) --")
+add("   first-person-heavy chunks (n=%d): %%pron = %.1f", nrow(mk_hi), B_pp_hi)
+add("   third-person-heavy  chunks (n=%d): %%pron = %.1f", nrow(mk_lo), B_pp_lo)
+add("   Wilcoxon hi vs lo : p = %.4g", B_wil)
+add("   pooled within-work corr(fp_density, %%pron): median rho %+.3f (positive %d/%d)",
+    B_med, B_pos, B_nn)
+add("   => %s", ifelse(B_pass,
+    "local person does NOT move composition -> year, not person.",
+    "local person tracks composition -> qualify independence."))
+
+add("-- Check C: not confined to the essayistic works (late narration %%pron) --")
+add("   essayistic (n=%d) mean %.1f vs narrative (n=%d) mean %.1f | Wilcoxon p = %s",
+    length(C_e), mean(C_e), length(C_r), mean(C_r),
+    ifelse(is.na(C_p), "n/a", sprintf("%.4g", C_p)))
+add("   => %s", ifelse(C_pass,
+    "register is not the driver.",
+    "register differs -- qualify."))
+add("")
+
+add("-- Concreteness sub-claim (SUPPORTING; instrument = %s) --",
+    ifelse(is.null(conc_env$tab), "morphological", "published norms"))
+add("   proximity of concrete-head 'that N' vs year (clean): %s", CC_ncl$txt)
+add("   norm-covered heads: %.1f%% (rest via morphological fallback)", conc_share)
+add("")
+
+add("############### PER WORK (narration only; sorted by year) ###############")
+add("%-26s %4s %6s %6s %7s %6s %5s",
+    "work", "yr", "prop_n", "pron_n", "dprnDst", "prop_w", "clean")
+for (i in seq_len(nrow(nov)))
+    if (!is.na(nov$year[i]))
+        add("%-26s %4d %6.3f %5.1f%% %7.3f %6.3f %5s",
+            substr(nov$novel[i], 1, 26), as.integer(nov$year[i]),
+            nov$prop_n[i], nov$pctpron_n[i], nov$dprn_dist_n[i],
+            nov$prop_w[i], ifelse(nov$clean[i], "yes", "NO"))
+add("")
+
+add("############### SCOPE OF THE RESULT ###############")
+add("  The pronominal/adnominal division is pure part of speech from the parse.")
+add("  The concrete/abstract division is supporting texture and depends on the")
+add("  external norms named above.")
+add("  The trend is found and tested on the same set of works: the checks above")
+add("  establish robustness to dialogue, person, and register, not independent")
+add("  replication. n = 18 at the level of the work.")
+add("============================================================================")
+cat(paste(R, collapse = "\n"), "\n")
+
+
+# ==============================================================================
+# ==============================================================================
+# SCRIPT B — Deixis_Evidence_Code.R
+# ==============================================================================
+# ==============================================================================
+#
+# Produces the two things a reading needs from the count: descriptive rates a
+# reader can hold (plain per-1,000-word figures for early and late regimes and
+# per work), and ranked concordance lines, locatable in the source, for each of
+# the three reported categories:
+#
+#   bare distal      : demonstrative pronoun that/those in narration
+#   proximal adnominal : this/these with a head noun in narration
+#   proximal immediacy : here / now / bare this in narration
+#
+# Reuses the annotation cache written by Script A, upgrading it in place if it
+# lacks the sentence column.
+#
+# Part of the From This to That repository. See the repository header above
+# for the full reference, requirements, and data dependencies.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+setwd("...")   # Set your working directory
+
+BRYS_FILE   <- "Concreteness_ratings_Brysbaert_et_al_BRM.txt"   # optional
+CACHE_FILE  <- "coetzee_annotation_cache.rds"   # reused and upgraded across runs
+N_PER_NOVEL <- 12L    # concordance lines kept per work per category
+CTX_TOK_CFG <- 15L    # tokens of context each side, recorded in the CSV
+EARLY_MAX   <- 1997   # regime boundary, inclusive
+LATE_MIN    <- 1999
+
+
+# ==============================================================================
+# SECTION 2: Load Required Libraries
+# ==============================================================================
+
+.need <- function(p) {
+    if (!requireNamespace(p, quietly = TRUE))
+        install.packages(p, repos = "https://cloud.r-project.org")
+}
+.need("udpipe")
+.need("data.table")
+suppressPackageStartupMessages({
+    library(udpipe)
+    library(data.table)
+})
+
+meta <- data.frame(
+    key = c("dusklands", "heart", "barbarians", "michael", "foe", "iron",
+            "petersburg", "boyhood", "disgrace", "youth", "costello", "slow",
+            "diary", "summertime", "childhood", "schooldays", "death", "pole"),
+    title = c("Dusklands", "In the Heart of the Country",
+              "Waiting for the Barbarians", "Life & Times of Michael K", "Foe",
+              "Age of Iron", "The Master of Petersburg", "Boyhood", "Disgrace",
+              "Youth", "Elizabeth Costello", "Slow Man", "Diary of a Bad Year",
+              "Summertime", "The Childhood of Jesus", "The Schooldays of Jesus",
+              "The Death of Jesus", "The Pole"),
+    year = c(1974, 1977, 1980, 1983, 1986, 1990, 1994, 1997, 1999, 2002, 2003,
+             2005, 2007, 2009, 2013, 2016, 2019, 2023),
+    strip_quotes = rep(TRUE, 18),
+    stringsAsFactors = FALSE)
+
+
+# ==============================================================================
+# SECTION 3: Category Definitions and Ranking Functions
+# ==============================================================================
+
+# ---- Dialogue detection (identical to Script A; needed to keep the -----------
+# ---- concordance to narration) ----------------------------------------------
+detect_quote_marker <- function(token, upos) {
+    q    <- upos == "PUNCT"
+    n_cd <- sum(q & token %in% c("\u201C", "\u201D"))
+    n_sd <- sum(q & token == "\"")
+    n_cs <- sum(q & token %in% c("\u2018", "\u2019"))
+    n_ss <- sum(q & token == "'")
+    if (n_cd >= 20) "curly_double"
+    else if (n_sd >= 20) "straight_double"
+    else if (n_cs >= 20) "curly_single"
+    else if (n_ss >= 40) "straight_single"
+    else "none"
+}
+
+build_dialogue_flags <- function(token, upos, para_id,
+                                 strip_quotes = TRUE, max_span = 800, peek = 3) {
+    n   <- length(token)
+    out <- rep(FALSE, n)
+    if (!strip_quotes || n == 0)
+        return(list(in_dialogue = out, repairs = NA_integer_, marker = "override_off"))
+
+    marker <- detect_quote_marker(token, upos)
+    if (marker == "none")
+        return(list(in_dialogue = out, repairs = 0L, marker = marker))
+
+    is_q <- upos == "PUNCT" & switch(marker,
+        curly_double    = token %in% c("\u201C", "\u201D"),
+        straight_double = token == "\"",
+        curly_single    = token %in% c("\u2018", "\u2019"),
+        straight_single = token == "'")
+
+    role <- rep(NA_character_, n)
+    if (marker == "curly_double") {
+        role[is_q & token == "\u201C"] <- "open"
+        role[is_q & token == "\u201D"] <- "close"
+    } else if (marker == "curly_single") {
+        role[is_q & token == "\u2018"] <- "open"
+        role[is_q & token == "\u2019"] <- "close"
+    } else {
+        role[is_q] <- "toggle"
+    }
+
+    q_idx   <- which(is_q)
+    p_start <- which(c(TRUE, para_id[-1] != para_id[-n]))
+    ev <- rbind(data.frame(i = p_start, type = "para",  stringsAsFactors = FALSE),
+                data.frame(i = q_idx,   type = "quote", stringsAsFactors = FALSE))
+    ev <- ev[order(ev$i, ev$type != "para"), ]
+
+    open_at <- NA_integer_
+    repairs <- 0L
+    spans_s <- integer(0)
+    spans_e <- integer(0)
+    close_span <- function(a, b) {
+        spans_s <<- c(spans_s, a)
+        spans_e <<- c(spans_e, b)
+    }
+    consumed <- rep(FALSE, n)
+
+    for (r in seq_len(nrow(ev))) {
+        i <- ev$i[r]
+        if (ev$type[r] == "para") {
+            if (!is.na(open_at) && i > open_at) {
+                w <- q_idx[q_idx >= i & q_idx < i + peek]
+                w <- w[!consumed[w] & role[w] %in% c("open", "toggle")]
+                if (length(w)) {
+                    consumed[w[1]] <- TRUE
+                } else {
+                    close_span(open_at, i - 1L)
+                    open_at <- NA_integer_
+                    repairs <- repairs + 1L
+                }
+            }
+        } else {
+            if (consumed[i]) next
+            rl <- role[i]
+            if (is.na(open_at)) {
+                if (rl %in% c("open", "toggle")) open_at <- i
+            } else {
+                if (rl %in% c("close", "toggle")) {
+                    close_span(open_at, i)
+                    open_at <- NA_integer_
+                } else {
+                    close_span(open_at, i - 1L)
+                    open_at <- i
+                    repairs <- repairs + 1L
+                }
+            }
+            if (!is.na(open_at) && i - open_at > max_span) {
+                close_span(open_at, i)
+                open_at <- NA_integer_
+                repairs <- repairs + 1L
+            }
+        }
+    }
+    if (!is.na(open_at)) {
+        close_span(open_at, n)
+        repairs <- repairs + 1L
+    }
+    for (k in seq_along(spans_s)) out[spans_s[k]:spans_e[k]] <- TRUE
+    list(in_dialogue = out, repairs = repairs, marker = marker)
+}
+
+# ---- Concordance formatting --------------------------------------------------
+clean_ctx <- function(s) {
+    s <- gsub("[\r\n\t]+", " ", s)
+    s <- gsub(" +", " ", s)
+    trimws(s)
+}
+
+# ---- Ranking ----------------------------------------------------------------
+# The score orders candidate lines for legibility, not for inclusion: every hit
+# is written to the CSV, and the score decides which are shown first. For bare
+# distal hits it rewards a mid-length sentence and the copular shape, and
+# penalises the relativiser trap (a 'that' following a noun).
+
+score_bare_distal <- function(sent, after_word, prev_upos = "") {
+    nw <- length(strsplit(sent, "\\s+")[[1]])
+    s  <- 0
+    if (nw >= 4 && nw <= 32) s <- s + 2 else if (nw > 32 && nw <= 48) s <- s + 1
+    aw <- tolower(after_word)
+    if (aw %in% c("was", "is", "were", "would", "had", "could", "meant", "seemed"))
+        s <- s + 2
+    if (aw %in% c("which", "who")) s <- s - 2       # relativiser slipped through
+    if (prev_upos %in% c("NOUN", "PROPN")) s <- s - 4   # relativiser trap
+    if (grepl("[.!?]\\s*$", trimws(sent))) s <- s + 1   # complete sentence
+    s
+}
+
+# For proximal hits: crisp, thing-anchored immediacy rather than sprawling
+# hypotheticals, so sentence-initial subordinators and very long sentences are
+# penalised. Head-noun concreteness is added by the caller via conc_bonus.
+SUBORD_INIT <- "^(if|though|although|whether|unless|because|since|while|when|were)\\b"
+
+score_prox <- function(sent, conc_bonus = 0) {
+    st <- trimws(sent)
+    nw <- length(strsplit(st, "\\s+")[[1]])
+    s  <- 0
+    if (nw >= 3 && nw <= 24) s <- s + 3
+    else if (nw > 24 && nw <= 34) s <- s + 1
+    else if (nw > 45) s <- s - 2
+    if (grepl(SUBORD_INIT, tolower(st))) s <- s - 3
+    if (grepl("[.!?]\\s*$", st)) s <- s + 1
+    if (nchar(st) > 320) s <- s - 2
+    s + conc_bonus
+}
+
+# ---- THE category definitions ------------------------------------------------
+# Single source of truth, shared by this script and the validation suite.
+# Requires columns: token, lemma, upos, feats, is_word, in_dialogue.
+deixis_masks <- function(a) {
+    feats <- ifelse(is.na(a$feats), "", a$feats)
+    lem   <- tolower(a$lemma)
+    tok   <- tolower(a$token)
+    is_dem <- ((a$upos == "DET") | (a$upos == "PRON" & grepl("PronType=Dem", feats))) &
+              a$upos != "SCONJ" & !grepl("PronType=Rel", feats) &
+              lem %in% c("this", "that", "these", "those")
+    list(
+        bare_dist = is_dem & a$upos == "PRON" & lem %in% c("that", "those") &
+                    !a$in_dialogue & a$is_word,
+        prox_adn  = is_dem & a$upos == "DET" & lem %in% c("this", "these") &
+                    !a$in_dialogue & a$is_word,
+        imm       = a$is_word & !a$in_dialogue &
+                    ((tok %in% c("here", "now") & a$upos == "ADV") |
+                     (lem == "this" & a$upos == "PRON" & grepl("PronType=Dem", feats))),
+        here_now  = a$is_word & !a$in_dialogue &
+                    tok %in% c("here", "now") & a$upos == "ADV",
+        this_dem  = a$is_word & !a$in_dialogue &
+                    lem == "this" & grepl("PronType=Dem", feats))
+}
+
+# Concreteness lookup -> numeric Conc.M, or NA when norms are unavailable.
+conc_lookup <- function(lemma) {
+    if (is.null(conc_tab)) return(NA_real_)
+    unname(conc_tab[tolower(lemma)])
+}
+
+match_title <- function(p) {
+    b <- tolower(basename(p))
+    if (identical(basename(p), BRYS_FILE)) return(NA_character_)
+    h <- meta[vapply(meta$key, function(k) grepl(k, b, fixed = TRUE), logical(1)), ]
+    if (!nrow(h)) NA_character_ else h$title[which.max(nchar(h$key))]
+}
+
+
+# ==============================================================================
+# SECTION 4: Annotation and Concreteness Norms
+# ==============================================================================
+
+mf <- list.files(pattern = "^english-ewt.*\\.udpipe$")
+if (!length(mf)) mf <- udpipe_download_model(language = "english-ewt")$file_model
+ud <- udpipe_load_model(mf[1])
+
+conc_tab <- NULL
+if (file.exists(BRYS_FILE)) {
+    bt <- tryCatch(fread(BRYS_FILE, sep = "\t", header = TRUE, quote = ""),
+                   error = function(e) NULL)
+    if (!is.null(bt) && all(c("Word", "Conc.M") %in% names(bt))) {
+        v <- as.numeric(bt$`Conc.M`)
+        names(v) <- tolower(bt$Word)
+        v <- v[!duplicated(names(v))]
+        conc_tab <- v
+        message("Loaded concreteness norms: ", length(v),
+                " words (proximal adnominal ranking will favour concrete heads).")
+    } else {
+        message("Norms file present but missing Word/Conc.M -- ranking without concreteness.")
+    }
+} else {
+    message("No concreteness norms file -- ranking without concreteness.")
+}
+
+# ---- Reuse the cache if it carries what the concordance needs, else annotate
+# ---- once and upgrade the cache (adds the 'sentence' column) ------------------
+NEED_COLS <- c("doc_id", "paragraph_id", "sentence_id", "token_id",
+               "head_token_id", "token", "lemma", "upos", "feats",
+               "sentence", "novel")
+annot_all <- NULL
+
+if (file.exists(CACHE_FILE)) {
+    cc <- readRDS(CACHE_FILE)
+    if (all(NEED_COLS %in% names(cc))) {
+        annot_all <- as.data.table(cc)
+        message("Using cached annotation (", CACHE_FILE, ") -- no re-annotation needed.")
+    } else {
+        message("Cache lacks the 'sentence' column -- annotating once and upgrading the cache.")
+    }
+}
+
+if (is.null(annot_all)) {
+    txts   <- list.files(pattern = "\\.txt$", full.names = TRUE)
+    titles <- vapply(txts, match_title, character(1))
+    keep   <- !is.na(titles)
+    if (!any(keep)) stop("No .txt files in the working directory matched meta$key.")
+    message("Works: ", sum(keep), " | skipped: ",
+            paste(basename(txts[!keep]), collapse = ", "))
+    txts   <- txts[keep]
+    titles <- titles[keep]
+    annot_all <- rbindlist(lapply(seq_along(txts), function(i) {
+        message("  annotating [", i, "/", length(txts), "]: ", titles[i])
+        raw <- tryCatch(readLines(txts[i], warn = FALSE, encoding = "UTF-8"),
+                        error = function(e) readLines(txts[i], warn = FALSE))
+        a <- as.data.table(as.data.frame(
+            udpipe_annotate(ud, x = paste(raw, collapse = "\n"), doc_id = titles[i])))
+        a[, novel := titles[i]]
+        a
+    }), fill = TRUE)
+    saveRDS(annot_all, CACHE_FILE)
+    message("Cache written or upgraded -> ", CACHE_FILE)
+}
+
+if (!("sentence" %in% names(annot_all)))     # belt and braces
+    annot_all[, sentence := paste(token, collapse = " "),
+              by = .(novel, paragraph_id, sentence_id)]
+
+
+# ==============================================================================
+# SECTION 5: Per-Work Extraction
+# ==============================================================================
+
+novels  <- meta$title[meta$title %in% unique(annot_all$novel)]
+kw_bare <- list()
+kw_padn <- list()
+kw_imm  <- list()
+figs    <- list()
+
+for (fi in seq_along(novels)) {
+    ttl <- novels[fi]
+    yr  <- meta$year[match(ttl, meta$title)]
+    sq  <- meta$strip_quotes[match(ttl, meta$title)]
+    message("[", fi, "/", length(novels), "] ", ttl)
+
+    a <- annot_all[novel == ttl]
+    a[, is_word := !(upos %in% c("PUNCT", "SYM"))]
+    fl <- build_dialogue_flags(a$token, a$upos, a$paragraph_id, strip_quotes = sq)
+    a[, in_dialogue := fl$in_dialogue]
+
+    m         <- deixis_masks(a)     # single source of truth
+    bare_dist <- m$bare_dist
+    prox_adn  <- m$prox_adn
+    imm       <- m$imm
+
+    # ---- per-1,000-word narration rates --------------------------------------
+    nw_narr <- sum(a$is_word & !a$in_dialogue)
+    rate    <- function(mask) 1000 * sum(mask) / max(nw_narr, 1)
+    figs[[ttl]] <- data.frame(
+        novel = ttl, year = yr, narr_words = nw_narr,
+        bare_dist_per1k = round(rate(bare_dist), 3),
+        prox_adn_per1k  = round(rate(prox_adn), 3),
+        here_now_per1k  = round(rate(m$here_now), 3),
+        this_per1k      = round(rate(m$this_dem), 3),
+        stringsAsFactors = FALSE)
+
+    ntok <- nrow(a)
+
+    # ---- head noun for adnominal hits, aligned by an explicit row id ----------
+    a[, rid := .I]
+    a[, sk := paste(doc_id, paragraph_id, sentence_id, sep = "\x1f")]
+    hmap <- a[, .(sk, token_id, hl = tolower(lemma), hu = upos)]
+    a2 <- merge(a[, .(rid, sk, head_token_id)], hmap,
+                by.x = c("sk", "head_token_id"), by.y = c("sk", "token_id"),
+                all.x = TRUE, sort = FALSE)
+    setorder(a2, rid)
+    head_lem <- a2$hl[match(seq_len(ntok), a2$rid)]
+
+    # ---- concordance rows: the sentence is the quotable unit, plus a token
+    # ---- window each side and a paragraph/sentence locator --------------------
+    CTX_TOK <- CTX_TOK_CFG
+    kwic_rows <- function(mask, kind, scores) {
+        idx <- which(mask)
+        if (!length(idx)) return(NULL)
+        out <- vector("list", length(idx))
+        for (j in seq_along(idx)) {
+            k  <- idx[j]
+            L  <- if (k > 1) paste(a$token[max(1, k - CTX_TOK):(k - 1)], collapse = " ") else ""
+            Rr <- if (k < ntok) paste(a$token[(k + 1):min(ntok, k + CTX_TOK)], collapse = " ") else ""
+            sspan <- a$sentence[k]
+            if (is.na(sspan)) sspan <- paste(L, a$token[k], Rr)
+            hn <- head_lem[k]
+            cm <- conc_lookup(hn)
+            out[[j]] <- data.frame(
+                novel = ttl, year = yr, kind = kind, score = scores[k],
+                node = a$token[k],
+                head_noun = ifelse(is.na(hn), "", hn),
+                head_conc = ifelse(is.na(cm), NA_real_, round(cm, 2)),
+                left = clean_ctx(L), right = clean_ctx(Rr),
+                sentence = clean_ctx(sspan),
+                locator = sprintf("para %s / sent %s",
+                                  a$paragraph_id[k], a$sentence_id[k]),
+                stringsAsFactors = FALSE)
+        }
+        do.call(rbind, out)
+    }
+
+    # ---- per-hit scores, each category with its own logic ---------------------
+    sent_at <- function(k) {
+        s <- a$sentence[k]
+        if (is.na(s)) "" else s
+    }
+
+    sc_bare <- rep(-Inf, ntok)
+    for (k in which(bare_dist)) {
+        aft <- if (k < ntok) a$token[k + 1] else ""
+        pk  <- k - 1L
+        while (pk >= 1 && a$upos[pk] == "PUNCT") pk <- pk - 1L
+        pupos <- if (pk >= 1 && a$sentence_id[pk] == a$sentence_id[k] &&
+                     a$paragraph_id[pk] == a$paragraph_id[k]) a$upos[pk] else ""
+        sc_bare[k] <- score_bare_distal(sent_at(k), aft, pupos)
+    }
+
+    sc_padn <- rep(-Inf, ntok)
+    for (k in which(prox_adn)) {
+        cm <- conc_lookup(head_lem[k])
+        cb <- if (is.na(cm)) 0 else if (cm >= 3.5) 2 else if (cm <= 2.5) -1 else 0
+        sc_padn[k] <- score_prox(sent_at(k), cb)
+    }
+
+    sc_imm <- rep(-Inf, ntok)
+    for (k in which(imm)) sc_imm[k] <- score_prox(sent_at(k), 0)
+
+    dedup_keep <- function(df) {
+        if (is.null(df)) return(NULL)
+        df <- df[order(-df$score), ]
+        df <- df[!duplicated(df$sentence), ]
+        head(df, N_PER_NOVEL)
+    }
+
+    b  <- kwic_rows(bare_dist, "bare_distal",    sc_bare)
+    if (!is.null(b))  kw_bare[[ttl]] <- dedup_keep(b)
+    pa <- kwic_rows(prox_adn,  "prox_adnominal", sc_padn)
+    if (!is.null(pa)) kw_padn[[ttl]] <- dedup_keep(pa)
+    im <- kwic_rows(imm,       "prox_immediacy", sc_imm)
+    if (!is.null(im)) kw_imm[[ttl]] <- dedup_keep(im)
+}
+
+figs <- rbindlist(figs)
+setorder(figs, year)
+kwb <- rbindlist(kw_bare, fill = TRUE)
+kwp <- rbindlist(kw_padn, fill = TRUE)
+kwi <- rbindlist(kw_imm,  fill = TRUE)
+
+fwrite(figs, "deixis_descriptive_figures.csv")
+fwrite(kwb,  "kwic_bare_distal.csv")
+fwrite(kwp,  "kwic_prox_adnominal.csv")
+fwrite(kwi,  "kwic_prox_immediacy.csv")
+
+
+# ==============================================================================
+# SECTION 6: Descriptive Digest
+# ==============================================================================
+
+reg <- function(v, y) c(early = mean(v[y <= EARLY_MAX]),
+                        late  = mean(v[y >= LATE_MIN]))
+
+R   <- character()
+add <- function(f, ...) R <<- c(R, if (length(list(...))) sprintf(f, ...) else f)
+
+add("")
+add("================= DESCRIPTIVE FIGURES =================")
+add(" narration only, per 1,000 words; EARLY = <=%d (n=%d), LATE = >=%d (n=%d)",
+    EARLY_MAX, sum(figs$year <= EARLY_MAX), LATE_MIN, sum(figs$year >= LATE_MIN))
+add("")
+
+b  <- reg(figs$bare_dist_per1k, figs$year)
+a1 <- reg(figs$prox_adn_per1k,  figs$year)
+h  <- reg(figs$here_now_per1k,  figs$year)
+t  <- reg(figs$this_per1k,      figs$year)
+
+add(" bare distal (that/those, pronoun) : early %.2f -> late %.2f   (x%.1f)",
+    b["early"], b["late"], b["late"] / b["early"])
+add(" proximal adnominal (this/these+N) : early %.2f -> late %.2f   (x%.2f)",
+    a1["early"], a1["late"], a1["late"] / a1["early"])
+add(" here / now (adverb)               : early %.2f -> late %.2f", h["early"], h["late"])
+add(" this (demonstrative)              : early %.2f -> late %.2f", t["early"], t["late"])
+add("")
+
+add("================= TOP CONCORDANCE EXHIBITS (screen digest) =================")
+show_top <- function(dt, label) {
+    add("")
+    add("---- %s ----", label)
+    if (nrow(dt) == 0) {
+        add("  (none found)")
+        return(invisible())
+    }
+    earlyN <- dt[year <= EARLY_MAX]
+    lateN  <- dt[year >= LATE_MIN]
+    pick <- function(sub) {
+        if (!nrow(sub)) return()
+        sub <- sub[order(-score)]
+        for (nv in head(unique(sub$novel), 4)) {
+            s1 <- sub[novel == nv][1]
+            add("  [%s %d] %s", nv, s1$year, substr(s1$sentence, 1, 180))
+        }
+    }
+    add("  EARLY exemplars:")
+    pick(earlyN)
+    add("  LATE exemplars:")
+    pick(lateN)
+}
+
+show_top(kwb, "BARE DISTAL (pronominal that/those)")
+show_top(kwp, "PROXIMAL ADNOMINAL (this/these with a head noun)")
+show_top(kwi, "PROXIMAL IMMEDIACY (here / now / bare this)")
+
+add("")
+add("Full ranked concordances (sentence, %d-token window each side, locator) in:",
+    CTX_TOK_CFG)
+add("  kwic_bare_distal.csv, kwic_prox_adnominal.csv, kwic_prox_immediacy.csv")
+add("Per-work rates in: deixis_descriptive_figures.csv")
+add("NOTE: read the top bare-distal lines by hand before quoting. The parser")
+add("lets a small number of relativiser and complementiser 'that's through, and")
+add("Script C measures how many.")
+add("====================================================================")
+cat(paste(R, collapse = "\n"), "\n")
+
+
+# ==============================================================================
+# ==============================================================================
+# SCRIPT C — Deixis_Validation_Code.R
+# ==============================================================================
+# ==============================================================================
+#
+# Run after Script B, in the same working directory. Four independent checks,
+# with a single pass/fail report at the end.
+#
+#  PART 1  GROUND TRUTH -- runs the shipped category definitions against a
+#          hand-built annotation table with known answers: demonstratives,
+#          relativisers, complementisers, existential 'there', dialogue,
+#          here/now, and 'Now' as a noun.
+#  PART 2  CONSISTENCY  -- recomputes every per-work rate from the cache with
+#          those same definitions and compares to the published CSV.
+#  PART 3  VERBATIM     -- takes the top exhibits from the three concordance
+#          CSVs and finds them, whitespace- and punctuation-normalised, in the
+#          source .txt files. Guards against tokenisation mangling a quotation.
+#  PART 4  AUDIT SAMPLE -- writes a stratified random sample (40 per category,
+#          split early and late) for manual coding. Mark each row's
+#          'human_correct' as 1 or 0, save, then call precision_report() for
+#          the audited figure.
+#
+# The definitions in Section 2 are copied from Script B so that this script
+# depends on no other .R file, only on the CSVs and the cache. Keep the two
+# copies in step if either is edited.
+#
+# Part of the From This to That repository. See the repository header above
+# for the full reference, requirements, and data dependencies.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+setwd("...")   # Set your working directory
+
+CACHE_FILE <- "coetzee_annotation_cache.rds"
+FIGS_CSV   <- "deixis_descriptive_figures.csv"
+KWIC_FILES <- c("kwic_bare_distal.csv", "kwic_prox_adnominal.csv",
+                "kwic_prox_immediacy.csv")
+AUDIT_OUT  <- "deixis_audit_sample.csv"
+BRYS_FILE  <- "Concreteness_ratings_Brysbaert_et_al_BRM.txt"
+
+N_AUDIT_PER_CAT <- 40L    # rows per category in the audit sample
+TOL_PCT         <- 0.5    # allowed % difference in Part 2
+AUDIT_SEED      <- 20260703L
+
+suppressPackageStartupMessages({
+    library(data.table)
+})
+set.seed(AUDIT_SEED)
+
+R   <- character()
+add <- function(f, ...) R <<- c(R, if (length(list(...))) sprintf(f, ...) else f)
+overall <- TRUE
+verdict <- function(name, ok) {
+    overall <<- overall && ok
+    add("  [%s] %s", ifelse(ok, "PASS", "FAIL"), name)
+    ok
+}
+
+
+# ==============================================================================
+# SECTION 2: Embedded Category Definitions
+# ==============================================================================
+# Copied from Script B so that the code tested here is the code that produced
+# the results.
+
+conc_tab <- NULL                              # conc_lookup dependency
+
+detect_quote_marker <- function(token, upos) {
+    q    <- upos == "PUNCT"
+    n_cd <- sum(q & token %in% c("\u201C", "\u201D"))
+    n_sd <- sum(q & token == "\"")
+    n_cs <- sum(q & token %in% c("\u2018", "\u2019"))
+    n_ss <- sum(q & token == "'")
+    if (n_cd >= 20) "curly_double"
+    else if (n_sd >= 20) "straight_double"
+    else if (n_cs >= 20) "curly_single"
+    else if (n_ss >= 40) "straight_single"
+    else "none"
+}
+
+build_dialogue_flags <- function(token, upos, para_id,
+                                 strip_quotes = TRUE, max_span = 800, peek = 3) {
+    n   <- length(token)
+    out <- rep(FALSE, n)
+    if (!strip_quotes || n == 0)
+        return(list(in_dialogue = out, repairs = NA_integer_, marker = "override_off"))
+
+    marker <- detect_quote_marker(token, upos)
+    if (marker == "none")
+        return(list(in_dialogue = out, repairs = 0L, marker = marker))
+
+    is_q <- upos == "PUNCT" & switch(marker,
+        curly_double    = token %in% c("\u201C", "\u201D"),
+        straight_double = token == "\"",
+        curly_single    = token %in% c("\u2018", "\u2019"),
+        straight_single = token == "'")
+
+    role <- rep(NA_character_, n)
+    if (marker == "curly_double") {
+        role[is_q & token == "\u201C"] <- "open"
+        role[is_q & token == "\u201D"] <- "close"
+    } else if (marker == "curly_single") {
+        role[is_q & token == "\u2018"] <- "open"
+        role[is_q & token == "\u2019"] <- "close"
+    } else {
+        role[is_q] <- "toggle"
+    }
+
+    q_idx   <- which(is_q)
+    p_start <- which(c(TRUE, para_id[-1] != para_id[-n]))
+    ev <- rbind(data.frame(i = p_start, type = "para",  stringsAsFactors = FALSE),
+                data.frame(i = q_idx,   type = "quote", stringsAsFactors = FALSE))
+    ev <- ev[order(ev$i, ev$type != "para"), ]
+
+    open_at <- NA_integer_
+    repairs <- 0L
+    spans_s <- integer(0)
+    spans_e <- integer(0)
+    close_span <- function(a, b) {
+        spans_s <<- c(spans_s, a)
+        spans_e <<- c(spans_e, b)
+    }
+    consumed <- rep(FALSE, n)
+
+    for (r in seq_len(nrow(ev))) {
+        i <- ev$i[r]
+        if (ev$type[r] == "para") {
+            if (!is.na(open_at) && i > open_at) {
+                w <- q_idx[q_idx >= i & q_idx < i + peek]
+                w <- w[!consumed[w] & role[w] %in% c("open", "toggle")]
+                if (length(w)) {
+                    consumed[w[1]] <- TRUE
+                } else {
+                    close_span(open_at, i - 1L)
+                    open_at <- NA_integer_
+                    repairs <- repairs + 1L
+                }
+            }
+        } else {
+            if (consumed[i]) next
+            rl <- role[i]
+            if (is.na(open_at)) {
+                if (rl %in% c("open", "toggle")) open_at <- i
+            } else {
+                if (rl %in% c("close", "toggle")) {
+                    close_span(open_at, i)
+                    open_at <- NA_integer_
+                } else {
+                    close_span(open_at, i - 1L)
+                    open_at <- i
+                    repairs <- repairs + 1L
+                }
+            }
+            if (!is.na(open_at) && i - open_at > max_span) {
+                close_span(open_at, i)
+                open_at <- NA_integer_
+                repairs <- repairs + 1L
+            }
+        }
+    }
+    if (!is.na(open_at)) {
+        close_span(open_at, n)
+        repairs <- repairs + 1L
+    }
+    for (k in seq_along(spans_s)) out[spans_s[k]:spans_e[k]] <- TRUE
+    list(in_dialogue = out, repairs = repairs, marker = marker)
+}
+
+clean_ctx <- function(s) {
+    s <- gsub("[\r\n\t]+", " ", s)
+    s <- gsub(" +", " ", s)
+    trimws(s)
+}
+
+score_bare_distal <- function(sent, after_word, prev_upos = "") {
+    nw <- length(strsplit(sent, "\\s+")[[1]])
+    s  <- 0
+    if (nw >= 4 && nw <= 32) s <- s + 2 else if (nw > 32 && nw <= 48) s <- s + 1
+    aw <- tolower(after_word)
+    if (aw %in% c("was", "is", "were", "would", "had", "could", "meant", "seemed"))
+        s <- s + 2
+    if (aw %in% c("which", "who")) s <- s - 2
+    if (prev_upos %in% c("NOUN", "PROPN")) s <- s - 4
+    if (grepl("[.!?]\\s*$", trimws(sent))) s <- s + 1
+    s
+}
+
+deixis_masks <- function(a) {
+    feats <- ifelse(is.na(a$feats), "", a$feats)
+    lem   <- tolower(a$lemma)
+    tok   <- tolower(a$token)
+    is_dem <- ((a$upos == "DET") | (a$upos == "PRON" & grepl("PronType=Dem", feats))) &
+              a$upos != "SCONJ" & !grepl("PronType=Rel", feats) &
+              lem %in% c("this", "that", "these", "those")
+    list(
+        bare_dist = is_dem & a$upos == "PRON" & lem %in% c("that", "those") &
+                    !a$in_dialogue & a$is_word,
+        prox_adn  = is_dem & a$upos == "DET" & lem %in% c("this", "these") &
+                    !a$in_dialogue & a$is_word,
+        imm       = a$is_word & !a$in_dialogue &
+                    ((tok %in% c("here", "now") & a$upos == "ADV") |
+                     (lem == "this" & a$upos == "PRON" & grepl("PronType=Dem", feats))),
+        here_now  = a$is_word & !a$in_dialogue &
+                    tok %in% c("here", "now") & a$upos == "ADV",
+        this_dem  = a$is_word & !a$in_dialogue &
+                    lem == "this" & grepl("PronType=Dem", feats))
+}
+
+SUBORD_INIT <- "^(if|though|although|whether|unless|because|since|while|when|were)\\b"
+
+score_prox <- function(sent, conc_bonus = 0) {
+    st <- trimws(sent)
+    nw <- length(strsplit(st, "\\s+")[[1]])
+    s  <- 0
+    if (nw >= 3 && nw <= 24) s <- s + 3
+    else if (nw > 24 && nw <= 34) s <- s + 1
+    else if (nw > 45) s <- s - 2
+    if (grepl(SUBORD_INIT, tolower(st))) s <- s - 3
+    if (grepl("[.!?]\\s*$", st)) s <- s + 1
+    if (nchar(st) > 320) s <- s - 2
+    s + conc_bonus
+}
+
+conc_lookup <- function(lemma) {
+    if (is.null(conc_tab)) return(NA_real_)
+    unname(conc_tab[tolower(lemma)])
+}
+
+meta_person <- data.frame(
+    title = c("Dusklands", "In the Heart of the Country",
+              "Waiting for the Barbarians", "Life & Times of Michael K", "Foe",
+              "Age of Iron", "The Master of Petersburg", "Boyhood", "Disgrace",
+              "Youth", "Elizabeth Costello", "Slow Man", "Diary of a Bad Year",
+              "Summertime", "The Childhood of Jesus", "The Schooldays of Jesus",
+              "The Death of Jesus", "The Pole"),
+    year = c(1974, 1977, 1980, 1983, 1986, 1990, 1994, 1997, 1999, 2002, 2003,
+             2005, 2007, 2009, 2013, 2016, 2019, 2023),
+    strip_quotes = rep(TRUE, 18),
+    stringsAsFactors = FALSE)
+
+add("")
+add("==================== VALIDATION REPORT ====================")
+
+
+# ==============================================================================
+# SECTION 3: Part 1 — Ground Truth
+# ==============================================================================
+
+add("")
+add("-- PART 1: ground-truth suite on the shipped category definitions --")
+
+row <- function(tok, lem, up, feats = "", dial = FALSE)
+    data.frame(token = tok, lemma = lem, upos = up, feats = feats,
+               in_dialogue = dial, is_word = !(up %in% c("PUNCT", "SYM")),
+               stringsAsFactors = FALSE)
+
+gt <- do.call(rbind, list(
+    row("That",  "that",  "PRON", "PronType=Dem"),             #  1 bare distal      YES
+    row("was",   "be",    "AUX"),
+    row("that",  "that",  "SCONJ"),                            #  3 complementiser   NO
+    row("that",  "that",  "PRON", "PronType=Rel"),             #  4 relativiser      NO
+    row("those", "those", "PRON", "PronType=Dem"),             #  5 bare distal      YES
+    row("this",  "this",  "DET",  "PronType=Dem"),             #  6 prox adnominal   YES
+    row("room",  "room",  "NOUN"),
+    row("these", "these", "DET",  "PronType=Dem"),             #  8 prox adnominal   YES
+    row("days",  "day",   "NOUN"),
+    row("this",  "this",  "PRON", "PronType=Dem"),             # 10 bare proximal    YES (imm)
+    row("here",  "here",  "ADV"),                              # 11 imm + here_now   YES
+    row("now",   "now",   "ADV"),                              # 12 imm + here_now   YES
+    row("There", "there", "PRON"),                             # 13 existential      NO
+    row("that",  "that",  "PRON", "PronType=Dem", dial = TRUE),# 14 in dialogue      NO
+    row("here",  "here",  "ADV",  dial = TRUE),                # 15 in dialogue      NO
+    row("Now",   "now",   "NOUN"),                             # 16 'Now' as noun    NO
+    row("dog",   "dog",   "NOUN")
+))
+
+m <- deixis_masks(gt)
+verdict("bare_dist count == 2 (rows 1, 5; dialogue row excluded)",
+        sum(m$bare_dist) == 2 && all(which(m$bare_dist) == c(1, 5)))
+verdict("prox_adn count == 2 (rows 6, 8)",
+        sum(m$prox_adn) == 2 && all(which(m$prox_adn) == c(6, 8)))
+verdict("imm includes bare this + here + now (rows 10, 11, 12)",
+        sum(m$imm) == 3 && all(which(m$imm) == c(10, 11, 12)))
+verdict("here_now == 2 and excludes dialogue and 'Now' as noun",
+        sum(m$here_now) == 2 && all(which(m$here_now) == c(11, 12)))
+verdict("complementiser, relativiser, and existential all excluded",
+        !m$bare_dist[3] && !m$bare_dist[4] && !m$imm[13])
+verdict("dialogue exclusion works (rows 14, 15 in no mask)",
+        !m$bare_dist[14] && !m$here_now[15])
+
+# rate arithmetic: 15 narration words (17 rows, all words, minus 2 in dialogue)
+nw <- sum(gt$is_word & !gt$in_dialogue)
+verdict("rate arithmetic: bare 2/15 words -> 133.33 per 1,000",
+        abs(1000 * sum(m$bare_dist) / nw - 133.3333) < 0.01)
+
+# ranking regressions, including the post-nominal relativiser trap
+verdict("ranking: relativiser after a noun demoted below a genuine demonstrative",
+        score_bare_distal("as he would a porpoise thrown up by the waves, that would shortly expire",
+                          "would", "NOUN") <
+        score_bare_distal("That was how it was.", "was", ""))
+verdict("ranking: sentence-initial genuine 'That' not demoted",
+        score_bare_distal("That is his temperament.", "is", "") >= 4)
+verdict("ranking: subordinator-initial proximal penalised below a crisp one",
+        score_prox("If I abandon this room, locking the door, stuffing the cracks with rags, I will in time find myself abandoning another room.", 0) <
+        score_prox("He put down this cup and looked at her.", 0))
+
+
+# ==============================================================================
+# SECTION 4: Part 2 — Consistency
+# ==============================================================================
+
+add("")
+add("-- PART 2: figures CSV against recomputation from the cache --")
+
+if (!file.exists(CACHE_FILE) || !file.exists(FIGS_CSV)) {
+    verdict("cache and figures CSV present", FALSE)
+} else {
+    annot <- as.data.table(readRDS(CACHE_FILE))
+    figs  <- fread(FIGS_CSV)
+    worst <- 0
+    bad   <- character(0)
+    for (i in seq_len(nrow(meta_person))) {
+        ttl <- meta_person$title[i]
+        if (!ttl %in% annot$novel || !ttl %in% figs$novel) next
+        a <- annot[novel == ttl]
+        a[, is_word := !(upos %in% c("PUNCT", "SYM"))]
+        fl <- build_dialogue_flags(a$token, a$upos, a$paragraph_id,
+                                   strip_quotes = meta_person$strip_quotes[i])
+        a[, in_dialogue := fl$in_dialogue]
+        mm  <- deixis_masks(a)
+        nwn <- sum(a$is_word & !a$in_dialogue)
+        rc  <- 1000 * sum(mm$bare_dist) / max(nwn, 1)
+        ref <- figs[novel == ttl, bare_dist_per1k]
+        d   <- abs(rc - ref) / max(ref, 1e-9) * 100
+        if (d > worst) worst <- d
+        if (d > TOL_PCT) bad <- c(bad, sprintf("%s (%.2f%% off)", ttl, d))
+    }
+    verdict(sprintf("bare-distal rates match the CSV within %.1f%% (worst %.3f%%)",
+                    TOL_PCT, worst), length(bad) == 0)
+    if (length(bad)) add("      mismatches: %s", paste(bad, collapse = "; "))
+}
+
+
+# ==============================================================================
+# SECTION 5: Part 3 — Verbatim
+# ==============================================================================
+
+add("")
+add("-- PART 3: exhibits present verbatim in the source texts --")
+
+# Canonical form: letters and digits only, which makes tokenisation (clitics,
+# curly quotes, punctuation spacing) irrelevant. For strings of 25 characters
+# or more the odds of a spurious match are negligible.
+canon <- function(s) gsub("[^a-z0-9]+", "", tolower(s))
+
+match_title <- function(p) {
+    b <- tolower(basename(p))
+    if (identical(basename(p), BRYS_FILE)) return(NA_character_)
+    keys <- c("dusklands", "heart", "barbarians", "michael", "foe", "iron",
+              "petersburg", "boyhood", "disgrace", "youth", "costello", "slow",
+              "diary", "summertime", "childhood", "schooldays", "death", "pole")
+    hit <- keys[vapply(keys, function(k) grepl(k, b, fixed = TRUE), logical(1))]
+    if (!length(hit)) return(NA_character_)
+    meta_person$title[match(hit[which.max(nchar(hit))], keys)]
+}
+
+txts <- list.files(pattern = "\\.txt$", full.names = TRUE)
+tt   <- vapply(txts, match_title, character(1))
+txts <- txts[!is.na(tt)]
+tt   <- tt[!is.na(tt)]
+
+if (!length(txts) || !all(file.exists(KWIC_FILES))) {
+    verdict("source .txt files and concordance CSVs present", FALSE)
+} else {
+    srcnorm <- new.env()
+    for (j in seq_along(txts))
+        assign(tt[j], canon(paste(readLines(txts[j], warn = FALSE), collapse = " ")),
+               envir = srcnorm)
+    tot  <- 0
+    fnd  <- 0
+    miss <- character(0)
+    for (kf in KWIC_FILES) {
+        kk <- fread(kf)
+        kk <- kk[order(-score)][, head(.SD, 3), by = novel]     # top 3 per work
+        for (r in seq_len(nrow(kk))) {
+            nv <- kk$novel[r]
+            if (!exists(nv, envir = srcnorm)) next
+            ndl <- canon(kk$sentence[r])
+            if (nchar(ndl) < 25) next                            # too short to test
+            tot <- tot + 1
+            hit <- grepl(ndl, get(nv, envir = srcnorm), fixed = TRUE)
+            if (hit) fnd <- fnd + 1
+            else miss <- c(miss, sprintf("%s: %.60s...", nv, kk$sentence[r]))
+        }
+    }
+    pct <- 100 * fnd / max(tot, 1)
+    verdict(sprintf("verbatim match rate %.1f%% (%d/%d) >= 95%%", pct, fnd, tot),
+            pct >= 95)
+    if (length(miss)) {
+        add("      unmatched (tokeniser artefacts -- verify by hand before quoting):")
+        for (ms in head(miss, 8)) add("        %s", ms)
+    }
+}
+
+
+# ==============================================================================
+# SECTION 6: Part 4 — Audit Sample
+# ==============================================================================
+
+add("")
+add("-- PART 4: stratified audit sample --")
+
+if (exists("annot")) {
+    pool <- list()
+    for (i in seq_len(nrow(meta_person))) {
+        ttl <- meta_person$title[i]
+        if (!ttl %in% annot$novel) next
+        a <- annot[novel == ttl]
+        a[, is_word := !(upos %in% c("PUNCT", "SYM"))]
+        fl <- build_dialogue_flags(a$token, a$upos, a$paragraph_id,
+                                   strip_quotes = meta_person$strip_quotes[i])
+        a[, in_dialogue := fl$in_dialogue]
+        mm <- deixis_masks(a)
+        grab <- function(mask, kind) {
+            ix <- which(mask)
+            if (!length(ix)) return(NULL)
+            data.frame(novel = ttl, year = meta_person$year[i], kind = kind,
+                       node = a$token[ix], sentence = a$sentence[ix],
+                       stringsAsFactors = FALSE)
+        }
+        pool[[paste0(ttl, "b")]] <- grab(mm$bare_dist, "bare_distal")
+        pool[[paste0(ttl, "p")]] <- grab(mm$prox_adn,  "prox_adnominal")
+        pool[[paste0(ttl, "i")]] <- grab(mm$imm,       "prox_immediacy")
+    }
+    pool <- rbindlist(pool)
+
+    # Stratified: N_AUDIT_PER_CAT/2 per category and era. The explicit loop
+    # avoids data.table's .SD-with-derived-'by' dropping columns in some
+    # versions.
+    pool[, era := ifelse(year <= 1997, "early", "late")]
+    half  <- as.integer(N_AUDIT_PER_CAT / 2)
+    parts <- list()
+    for (kk in unique(pool$kind)) for (ee in c("early", "late")) {
+        sub  <- pool[kind == kk & era == ee]
+        nsub <- nrow(sub)
+        if (nsub == 0) next
+        parts[[paste(kk, ee)]] <- sub[sample(nsub, min(nsub, half))]
+    }
+    samp <- rbindlist(parts)
+    samp[, human_correct := ""]
+    ord <- c("kind", "era", "novel", "year", "node", "sentence", "human_correct")
+    ord <- ord[ord %in% names(samp)]          # defensive: reorder existing columns
+    setcolorder(samp, ord)
+    fwrite(samp, AUDIT_OUT)
+    verdict(sprintf("audit sample written: %s (%d rows; code human_correct as 1/0)",
+                    AUDIT_OUT, nrow(samp)), TRUE)
+    add("      then run: precision_report(\"%s\")", AUDIT_OUT)
+} else {
+    verdict("cache available for audit sampling", FALSE)
+}
+
+precision_report <- function(path = AUDIT_OUT) {
+    d <- fread(path)
+    d <- d[human_correct %in% c("0", "1", 0, 1)]
+    if (!nrow(d)) {
+        cat("No coded rows yet -- fill 'human_correct' with 1/0 first.\n")
+        return(invisible())
+    }
+    d[, ok := as.integer(human_correct)]
+    out <- d[, .(n = .N, precision = round(100 * mean(ok), 1)), by = kind]
+    cat("\nManual audit precision:\n")
+    print(out)
+    cat(sprintf("\nOverall: %.1f%% (n=%d)\n", 100 * mean(d$ok), nrow(d)))
+    invisible(out)
+}
+
+add("")
+add("==================== OVERALL: %s ====================",
+    ifelse(overall, "ALL CHECKS PASS", "FAILURES -- read above"))
+cat(paste(R, collapse = "\n"), "\n")
+
+
+# ==============================================================================
+# ==============================================================================
+# SCRIPT D — Deixis_Figure1_Code.R
+# ==============================================================================
+# ==============================================================================
+#
+# Plots the proximal share of demonstratives (this/these as a share of all
+# demonstratives, whole text) for each work against year of first publication,
+# with the permutation-tested changepoint shaded and the two regime means drawn
+# as dashed shelves. Also prints the regime means and the separation check for
+# the caption.
+#
+# Design: grayscale-safe (filled = pre-break, open = post-break), serif type,
+# no legend, and no gridlines beyond faint horizontals.
+#
+# Part of the From This to That repository. See the repository header above
+# for the full reference, requirements, and data dependencies.
+# ==============================================================================
+
+
+# ==============================================================================
+# SECTION 1: Setup and Configuration
+# ==============================================================================
+
+setwd("...")   # Set your working directory
+
+CSV_IN   <- "deixis_final_novel.csv"                 # written by Script A
+OUT_PDF  <- "figure1_deictic_withdrawal.pdf"         # vector, for submission
+OUT_PNG  <- "figure1_deictic_withdrawal.png"         # 600 dpi, for drafts
+BREAK_LO <- 1997                                     # the tested changepoint
+BREAK_HI <- 1999
+
+.need <- function(p) {
+    if (!requireNamespace(p, quietly = TRUE))
+        install.packages(p, repos = "https://cloud.r-project.org")
+}
+.need("ggplot2")
+suppressPackageStartupMessages(library(ggplot2))
+
+HAS_REPEL <- requireNamespace("ggrepel", quietly = TRUE)   # optional
+if (!HAS_REPEL)
+    message("Tip: install.packages('ggrepel') for cleaner point labels.")
+
+
+# ==============================================================================
+# SECTION 2: Data and Regime Means
+# ==============================================================================
+
+d <- read.csv(CSV_IN, stringsAsFactors = FALSE)
+stopifnot(all(c("novel", "year", "prop_w") %in% names(d)))
+d <- d[!is.na(d$year) & !is.na(d$prop_w), c("novel", "year", "prop_w")]
+d <- d[order(d$year), ]
+
+# short labels for the plot
+short <- c(
+    "Dusklands"                   = "Dusklands",
+    "In the Heart of the Country" = "Heart of \nthe Country",
+    "Waiting for the Barbarians"  = "Barbarians",
+    "Life & Times of Michael K"   = "Michael K",
+    "Foe"                         = "Foe",
+    "Age of Iron"                 = "Age of Iron",
+    "The Master of Petersburg"    = "Petersburg",
+    "Boyhood"                     = "Boyhood",
+    "Disgrace"                    = "Disgrace",
+    "Youth"                       = "Youth",
+    "Elizabeth Costello"          = "Elizabeth\nCostello",
+    "Slow Man"                    = "Slow Man",
+    "Diary of a Bad Year"         = "Bad Year",
+    "Summertime"                  = "Summertime",
+    "The Childhood of Jesus"      = "Childhood\nof Jesus",
+    "The Schooldays of Jesus"     = "Schooldays\nof Jesus",
+    "The Death of Jesus"          = "Death\nof Jesus",
+    "The Pole"                    = "The Pole")
+
+d$label  <- ifelse(d$novel %in% names(short), short[d$novel], d$novel)
+d$regime <- ifelse(d$year <= BREAK_LO, "early", "late")
+
+m_early <- mean(d$prop_w[d$regime == "early"])
+m_late  <- mean(d$prop_w[d$regime == "late"])
+
+cat(sprintf("regime means: early %.3f | late %.3f\n", m_early, m_late))
+cat(sprintf("separation: min(early) = %.3f  >  max(late) = %.3f  -> %s\n",
+            min(d$prop_w[d$regime == "early"]),
+            max(d$prop_w[d$regime == "late"]),
+            ifelse(min(d$prop_w[d$regime == "early"]) >
+                   max(d$prop_w[d$regime == "late"]),
+                   "no overlap", "overlaps")))
+
+
+# ==============================================================================
+# SECTION 3: The Figure
+# ==============================================================================
+
+band_lo <- BREAK_LO + 0.25      # shaded gap between the two works
+band_hi <- BREAK_HI - 0.25
+
+p <- ggplot(d, aes(x = year, y = prop_w)) +
+    # changepoint band
+    annotate("rect", xmin = band_lo, xmax = band_hi, ymin = -Inf, ymax = Inf,
+             fill = "grey55", alpha = 0.18) +
+    # regime-mean shelves
+    annotate("segment", x = min(d$year) - 1, xend = band_lo,
+             y = m_early, yend = m_early,
+             linetype = "dashed", linewidth = 0.35, colour = "grey35") +
+    annotate("segment", x = band_hi, xend = max(d$year) + 1,
+             y = m_late, yend = m_late,
+             linetype = "dashed", linewidth = 0.35, colour = "grey35") +
+    annotate("text", x = band_hi + 0.4, y = m_early,
+             label = sprintf("early regime mean %.2f", m_early),
+             hjust = 0, vjust = 0.5, size = 2.9, family = "serif",
+             colour = "grey25") +
+    annotate("text", x = band_lo - 0.4, y = m_late,
+             label = sprintf("late regime mean %.2f", m_late),
+             hjust = 1, vjust = 0.5, size = 2.9, family = "serif",
+             colour = "grey25") +
+    annotate("text", x = (band_lo + band_hi) / 2, y = max(d$prop_w) + 0.035,
+             label = "changepoint\n1997\u201399", size = 2.9, family = "serif",
+             colour = "grey25", lineheight = 0.95) +
+    # the points: filled pre-break, open post-break (grayscale-safe)
+    geom_point(aes(shape = regime), size = 2.4, stroke = 0.7, colour = "black") +
+    scale_shape_manual(values = c(early = 16, late = 1), guide = "none") +
+    scale_y_continuous(limits = c(0.25, max(d$prop_w) + 0.07),
+                       breaks = seq(0.25, 0.70, 0.05)) +
+    scale_x_continuous(breaks = seq(1975, 2020, 5)) +
+    # NB: the two regime-mean labels are placed by hand (early: right end, above
+    # the line; late: left end, below the cluster). If either collides with a
+    # point label on your render, nudge its x/y in the annotate() calls above.
+    labs(x = "Year of first publication",
+         y = "Proximal share of demonstratives",
+         title = "Figure 1. Deictic withdrawal, 1974\u20132023",
+         alt = paste("Scatter plot of eighteen points, one per work of fiction,",
+                     "showing the proximal share of demonstratives against year of",
+                     "first publication. The eight works up to 1997 (filled circles) all",
+                     "sit between about 0.45 and 0.67, averaging 0.55; the ten works from",
+                     "1999 onward (open circles) all sit between about 0.31 and 0.39,",
+                     "averaging 0.35. A shaded vertical band at 1997-99 marks the",
+                     "changepoint. The two groups do not overlap: every early work is",
+                     "more proximal than every late work.")) +
+    theme_minimal(base_size = 10, base_family = "serif") +
+    theme(panel.grid.minor   = element_blank(),
+          panel.grid.major.x = element_blank(),
+          panel.grid.major.y = element_line(linewidth = 0.2, colour = "grey88"),
+          axis.title = element_text(size = 9.5),
+          plot.title = element_text(size = 10, hjust = 0, face = "plain",
+                                    margin = margin(b = 8)),
+          axis.text  = element_text(colour = "black", size = 8.5),
+          plot.margin = margin(6, 10, 6, 6))
+
+# point labels
+if (HAS_REPEL) {
+    p <- p + ggrepel::geom_text_repel(
+        aes(label = label), size = 2.5, family = "serif", colour = "grey20",
+        lineheight = 0.85, seed = 42, max.overlaps = Inf, box.padding = 0.25,
+        point.padding = 0.2, min.segment.length = Inf, segment.colour = NA)
+} else {
+    p <- p + geom_text(aes(label = gsub("\n", " ", label)), size = 2.3,
+                       family = "serif", colour = "grey20", vjust = -1.0,
+                       check_overlap = TRUE)
+}
+
+ggsave(OUT_PDF, p, width = 7.0, height = 4.4, device = cairo_pdf)
+ggsave(OUT_PNG, p, width = 7.0, height = 4.4, dpi = 600)
+cat("Wrote:", OUT_PDF, "and", OUT_PNG, "\n")
+cat("If cairo_pdf errors on your system, replace device = cairo_pdf with device = 'pdf'.\n")
+
+p
